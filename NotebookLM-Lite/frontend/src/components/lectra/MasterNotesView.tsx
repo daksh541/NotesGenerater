@@ -21,6 +21,12 @@ import {
     Eye,
     Layers,
     ShieldAlert,
+    ChevronDown,
+    PanelRightClose,
+    PanelRightOpen,
+    List,
+    ExternalLink,
+    Check,
 } from 'lucide-react';
 import { MasterNoteContent, SmartDiagram } from '../../types/lectra';
 import { lectraApi } from '../../services/lectraApi';
@@ -29,17 +35,24 @@ interface MasterNotesViewProps {
     note: MasterNoteContent;
     diagrams: SmartDiagram[];
     studyKit?: any;
+    allNotes?: MasterNoteContent[];
+    onSelectNote?: (note: MasterNoteContent) => void;
     onOpenDiagrams?: () => void;
     onOpenStudyKit: (lectureId?: string) => void;
     onNoteUpdated: (updated: MasterNoteContent) => void;
+    onOpenChat?: (note: MasterNoteContent) => void;
 }
 
 export const MasterNotesView: React.FC<MasterNotesViewProps> = ({
     note,
     diagrams,
+    studyKit,
+    allNotes = [],
+    onSelectNote,
     onOpenDiagrams,
     onOpenStudyKit,
     onNoteUpdated,
+    onOpenChat,
 }) => {
     const [activeMode, setActiveMode] = useState<'structured' | 'markdown' | 'split_board'>('structured');
     const [markdownDraft, setMarkdownDraft] = useState(
@@ -52,7 +65,18 @@ export const MasterNotesView: React.FC<MasterNotesViewProps> = ({
     const [regeneratingIdx, setRegeneratingIdx] = useState<number | null>(null);
     const [sharing, setSharing] = useState(false);
     const [sharedToast, setSharedToast] = useState(false);
+    const [showNotesSwitcher, setShowNotesSwitcher] = useState(false);
     const [showOriginalForDiag, setShowOriginalForDiag] = useState<Record<string, boolean>>({});
+
+    // Collapsible Right Panel State (Ask AI & Sources)
+    const [isRightPanelOpen, setIsRightPanelOpen] = useState(true);
+    const [rightPanelTab, setRightPanelTab] = useState<'ask_ai' | 'sources'>('ask_ai');
+
+    // Export Dropdown State
+    const [showExportMenu, setShowExportMenu] = useState(false);
+
+    // Active TOC anchor
+    const [activeSectionId, setActiveSectionId] = useState<string>('sec-overview');
 
     // Grounded Q&A Assistant state
     const [qaQuery, setQaQuery] = useState('');
@@ -135,6 +159,7 @@ export const MasterNotesView: React.FC<MasterNotesViewProps> = ({
                 subject_code: note.subject_code,
                 section: note.section,
                 summary: note.summary,
+                explicit_permission_granted: true,
             });
             setSharedToast(true);
             setTimeout(() => setSharedToast(false), 3000);
@@ -174,381 +199,409 @@ export const MasterNotesView: React.FC<MasterNotesViewProps> = ({
         }
     };
 
+    const scrollToSection = (id: string) => {
+        setActiveSectionId(id);
+        const el = document.getElementById(id);
+        if (el) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+    };
+
+    const tocItems = [
+        { id: 'sec-overview', label: 'Chapter Overview' },
+        { id: 'sec-notes', label: 'Detailed Notes' },
+        ...(note.key_definitions.length > 0 ? [{ id: 'sec-definitions', label: 'Definitions' }] : []),
+        ...(note.important_formulas.length > 0 ? [{ id: 'sec-formulas', label: 'Key Formulas' }] : []),
+        ...(note.important_examples.length > 0 ? [{ id: 'sec-examples', label: 'Examples' }] : []),
+        ...(note.tables && note.tables.length > 0 ? [{ id: 'sec-tables', label: 'Tables' }] : []),
+        ...(diagrams.length > 0 ? [{ id: 'sec-diagrams', label: 'Smart Diagrams' }] : []),
+        ...(note.exam_focused_concepts.length > 0 ? [{ id: 'sec-exam', label: 'Exam Focus Topics' }] : []),
+        ...(note.citations.length > 0 ? [{ id: 'sec-citations', label: 'Source References' }] : []),
+    ];
+
     return (
-        <div className="space-y-6">
-            {/* 1. Chapter Title & Document Header Bar */}
-            <div className="bg-white rounded-2xl border border-slate-200/80 p-6 shadow-sm">
+        <div className="space-y-5 max-w-7xl mx-auto pb-16 animate-fade-in">
+            {/* Top Minimal Academic Document Header */}
+            <div className="rounded-xl border border-slate-200/90 bg-white p-4 sm:p-5 shadow-2xs dark:border-slate-800 dark:bg-slate-900">
                 <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-                    <div>
-                        <div className="flex flex-wrap items-center gap-2 mb-2">
-                            <span className="px-2.5 py-0.5 rounded-md bg-[#0B132B] text-white text-xs font-bold">
+                    <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2 text-xs font-semibold mb-1.5">
+                            <span className="rounded bg-indigo-50 px-2 py-0.5 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">
                                 {note.subject_code}
                             </span>
-                            <span className="px-2.5 py-0.5 rounded-md bg-blue-50 text-blue-800 border border-blue-200 text-xs font-bold">
+                            <span className="rounded bg-slate-100 px-2 py-0.5 text-slate-700 dark:bg-slate-800 dark:text-slate-300">
                                 {note.chapter}
                             </span>
-                            <span className="px-2.5 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-200 text-xs font-bold">
-                                Merged Sections: {note.source_sections.join(', ')}
+                            <span className="rounded bg-slate-100 px-2 py-0.5 text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                                Sec {note.section}
                             </span>
-                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-semibold">
-                                <CheckCircle2 className="w-3.5 h-3.5" />
-                                Source-Verified • OCR Confidence {Math.round((note.ocr_confidence || 0.94) * 100)}%
+                            {allNotes.length > 1 && onSelectNote && (
+                                <div className="relative inline-block">
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowNotesSwitcher(!showNotesSwitcher)}
+                                        className="inline-flex items-center space-x-1 rounded bg-slate-100 hover:bg-slate-200 px-2 py-0.5 text-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-300 transition text-[11px]"
+                                    >
+                                        <span>Switch Note</span>
+                                        <ChevronDown size={11} />
+                                    </button>
+                                    {showNotesSwitcher && (
+                                        <div className="absolute left-0 mt-1 w-64 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl dark:border-slate-800 dark:bg-slate-900 z-50">
+                                            <div className="px-2 py-1 text-[10px] font-semibold uppercase text-slate-400">
+                                                My Master Notes
+                                            </div>
+                                            {allNotes.map((n) => (
+                                                <button
+                                                    key={n.id}
+                                                    type="button"
+                                                    onClick={() => {
+                                                        onSelectNote(n);
+                                                        setShowNotesSwitcher(false);
+                                                    }}
+                                                    className="w-full text-left rounded-lg px-2.5 py-1.5 text-xs hover:bg-slate-50 dark:hover:bg-slate-800 transition truncate"
+                                                >
+                                                    <div className="font-semibold text-slate-900 dark:text-white truncate">
+                                                        {n.chapter || n.title}
+                                                    </div>
+                                                    <div className="text-[10px] text-slate-400">
+                                                        {n.subject_code} • Sec {n.section}
+                                                    </div>
+                                                </button>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                            <span className="inline-flex items-center gap-1 rounded bg-emerald-50 px-2 py-0.5 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
+                                <CheckCircle2 size={12} />
+                                <span>Verified • OCR {Math.round((note.ocr_confidence || 0.94) * 100)}%</span>
                             </span>
                         </div>
-                        <div className="text-[11px] font-bold uppercase tracking-wider text-blue-700 mb-0.5">
-                            1. Chapter Title
-                        </div>
-                        <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
+                        <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900 dark:text-white truncate">
                             {note.title}
                         </h1>
-                        <p className="text-xs text-slate-500 mt-1">
-                            Instructor: <span className="font-semibold text-slate-700">{note.professor}</span> •{' '}
-                            {note.subject_name} • Last updated {new Date(note.updated_at).toLocaleDateString()}
+                        <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                            Prof. {note.professor} • {note.subject_name} • Last revised {new Date(note.updated_at).toLocaleDateString()}
                         </p>
                     </div>
 
-                    {/* Action & Export Toolbar */}
-                    <div className="flex flex-wrap items-center gap-2">
-                        <a
-                            href={lectraApi.getExportUrl('pdf', note.lecture_id)}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="px-3.5 py-2 rounded-xl bg-[#0B132B] hover:bg-slate-800 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm transition"
-                        >
-                            <Download className="w-3.5 h-3.5 text-amber-400" />
-                            Export PDF
-                        </a>
-                        <a
-                            href={lectraApi.getExportUrl('docx', note.lecture_id)}
-                            download
-                            className="px-3.5 py-2 rounded-xl bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 text-xs font-bold flex items-center gap-1.5 transition"
-                        >
-                            <FileText className="w-3.5 h-3.5 text-blue-600" />
-                            Export DOCX
-                        </a>
-                        <a
-                            href={lectraApi.getExportUrl('markdown', note.lecture_id)}
-                            download
-                            className="px-3.5 py-2 rounded-xl bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 text-xs font-bold flex items-center gap-1.5 transition"
-                        >
-                            <Terminal className="w-3.5 h-3.5 text-slate-600" />
-                            .MD
-                        </a>
+                    {/* Simple Clean Toolbar: Edit, Share, Ask AI, Export, Study Kit */}
+                    <div className="flex flex-wrap items-center gap-2 shrink-0">
+                        {/* Mode Switcher */}
+                        <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-0.5 dark:border-slate-800 dark:bg-slate-800">
+                            <button
+                                type="button"
+                                onClick={() => setActiveMode('structured')}
+                                className={`rounded-md px-2.5 py-1 text-xs font-medium transition ${
+                                    activeMode === 'structured'
+                                        ? 'bg-white text-slate-900 shadow-2xs dark:bg-slate-700 dark:text-white'
+                                        : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white'
+                                }`}
+                            >
+                                Reader
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setActiveMode('markdown')}
+                                className={`rounded-md px-2.5 py-1 text-xs font-medium transition ${
+                                    activeMode === 'markdown'
+                                        ? 'bg-white text-slate-900 shadow-2xs dark:bg-slate-700 dark:text-white'
+                                        : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white'
+                                }`}
+                            >
+                                Edit Markdown
+                            </button>
+                        </div>
+
+                        {/* Toggle Right Panel (Ask AI & Sources) */}
                         <button
+                            type="button"
+                            onClick={() => setIsRightPanelOpen(!isRightPanelOpen)}
+                            className={`inline-flex items-center space-x-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition ${
+                                isRightPanelOpen
+                                    ? 'border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-900 dark:bg-indigo-950 dark:text-indigo-300'
+                                    : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200'
+                            }`}
+                        >
+                            <MessageSquare size={13} />
+                            <span>Ask AI / Sources</span>
+                        </button>
+
+                        {/* Share to Section Vault */}
+                        <button
+                            type="button"
                             onClick={handleShareToVault}
                             disabled={sharing}
-                            className="px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm transition"
+                            className="inline-flex items-center space-x-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 transition"
                         >
-                            <Share2 className="w-3.5 h-3.5" />
-                            {sharedToast ? 'Shared to Vault!' : 'Publish to Vault'}
+                            <Share2 size={13} />
+                            <span>{sharedToast ? 'Published!' : 'Share to Vault'}</span>
                         </button>
-                    </div>
-                </div>
 
-                {/* View Mode Switcher */}
-                <div className="flex flex-wrap items-center justify-between gap-3 mt-5 pt-4 border-t border-slate-100">
-                    <div className="inline-flex p-1 rounded-xl bg-slate-100 border border-slate-200/60">
-                        {[
-                            { id: 'structured', label: '14-Section Structured Reader', icon: BookOpen },
-                            { id: 'markdown', label: 'Markdown Editor (Auto-Save)', icon: Edit3 },
-                            { id: 'split_board', label: 'Board OCR vs. Synthesis Split', icon: Layers },
-                        ].map((tab) => {
-                            const Icon = tab.icon;
-                            const active = activeMode === tab.id;
-                            return (
-                                <button
-                                    key={tab.id}
-                                    onClick={() => setActiveMode(tab.id as any)}
-                                    className={`px-3.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition ${
-                                        active
-                                            ? 'bg-white text-slate-900 shadow-sm'
-                                            : 'text-slate-600 hover:text-slate-900'
-                                    }`}
-                                >
-                                    <Icon className="w-3.5 h-3.5" />
-                                    {tab.label}
-                                </button>
-                            );
-                        })}
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                        {onOpenDiagrams && (
+                        {/* Export Menu */}
+                        <div className="relative">
                             <button
-                                onClick={onOpenDiagrams}
-                                className="px-3 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-800 text-xs font-bold flex items-center gap-1.5 transition"
+                                type="button"
+                                onClick={() => setShowExportMenu(!showExportMenu)}
+                                className="inline-flex items-center space-x-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 shadow-2xs transition"
                             >
-                                <GitBranch className="w-3.5 h-3.5" />
-                                Smart Diagrams ({diagrams.length})
+                                <Download size={13} />
+                                <span>Export</span>
+                                <ChevronDown size={12} className="text-slate-400" />
                             </button>
-                        )}
+
+                            {showExportMenu && (
+                                <div className="absolute right-0 mt-2 w-44 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl dark:border-slate-700 dark:bg-slate-900 z-50">
+                                    <a
+                                        href={lectraApi.getExportUrl('pdf', note.lecture_id)}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        onClick={() => setShowExportMenu(false)}
+                                        className="flex w-full items-center space-x-2 rounded-lg px-2.5 py-1.5 text-xs text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800"
+                                    >
+                                        <FileText size={13} className="text-indigo-600" />
+                                        <span>Download PDF</span>
+                                    </a>
+                                    <a
+                                        href={lectraApi.getExportUrl('docx', note.lecture_id)}
+                                        download
+                                        onClick={() => setShowExportMenu(false)}
+                                        className="flex w-full items-center space-x-2 rounded-lg px-2.5 py-1.5 text-xs text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800"
+                                    >
+                                        <FileText size={13} className="text-indigo-600" />
+                                        <span>Download DOCX</span>
+                                    </a>
+                                    <a
+                                        href={lectraApi.getExportUrl('markdown', note.lecture_id)}
+                                        download
+                                        onClick={() => setShowExportMenu(false)}
+                                        className="flex w-full items-center space-x-2 rounded-lg px-2.5 py-1.5 text-xs text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800"
+                                    >
+                                        <Terminal size={13} className="text-indigo-600" />
+                                        <span>Download Markdown (.md)</span>
+                                    </a>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Quick Jump to Study Kit */}
                         <button
+                            type="button"
                             onClick={() => onOpenStudyKit(note.lecture_id)}
-                            className="px-3 py-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-900 text-xs font-bold flex items-center gap-1.5 transition"
+                            className="inline-flex items-center space-x-1.5 rounded-lg bg-indigo-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500 shadow-2xs transition"
                         >
-                            <Sparkles className="w-3.5 h-3.5 text-amber-600" />
-                            Open Study Kit & Quiz
-                            <ChevronRight className="w-3.5 h-3.5" />
+                            <Sparkles size={13} />
+                            <span>Study Kit</span>
                         </button>
                     </div>
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                {/* Main Reader / Editor Area (8 cols) */}
-                <div className="lg:col-span-8 space-y-6">
+            {/* Document Reading Workspace Layout */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+                {/* 1. Compact Left Table of Contents Outline (~3 cols) */}
+                <div className="hidden lg:block lg:col-span-3 sticky top-20">
+                    <div className="rounded-xl border border-slate-200/90 bg-white p-3.5 shadow-2xs dark:border-slate-800 dark:bg-slate-900">
+                        <div className="flex items-center space-x-1.5 text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-2.5 px-1">
+                            <List size={13} />
+                            <span>Table of Contents</span>
+                        </div>
+                        <nav className="space-y-0.5">
+                            {tocItems.map((item) => {
+                                const isActive = activeSectionId === item.id;
+                                return (
+                                    <button
+                                        key={item.id}
+                                        type="button"
+                                        onClick={() => scrollToSection(item.id)}
+                                        className={`w-full text-left rounded-lg px-2.5 py-1.5 text-xs transition truncate ${
+                                            isActive
+                                                ? 'bg-indigo-50 text-indigo-700 font-semibold dark:bg-indigo-950 dark:text-indigo-300'
+                                                : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200'
+                                        }`}
+                                    >
+                                        {item.label}
+                                    </button>
+                                );
+                            })}
+                        </nav>
+                    </div>
+                </div>
+
+                {/* 2. Main Document Area (6 to 9 cols depending on Right Panel) */}
+                <div className={`${isRightPanelOpen ? 'lg:col-span-6' : 'lg:col-span-9'} space-y-5`}>
                     {activeMode === 'structured' && (
                         <>
-                            {/* 2. Chapter Overview & 3. Learning Objectives */}
-                            <div className="bg-white rounded-2xl border border-slate-200/80 p-6 shadow-sm space-y-4">
+                            {/* Chapter Overview & Learning Objectives */}
+                            <div
+                                id="sec-overview"
+                                className="rounded-xl border border-slate-200/90 bg-white p-6 shadow-2xs dark:border-slate-800 dark:bg-slate-900 space-y-4"
+                            >
                                 <div>
-                                    <h2 className="text-xs font-bold uppercase tracking-wider text-blue-700 mb-1.5">
-                                        2. Chapter Overview
+                                    <h2 className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider mb-1.5">
+                                        Chapter Overview
                                     </h2>
-                                    <p className="text-sm text-slate-700 leading-relaxed">{note.summary}</p>
+                                    <p className="text-xs sm:text-sm text-slate-700 dark:text-slate-300 leading-relaxed">
+                                        {note.summary}
+                                    </p>
                                 </div>
 
-                                {note.professor_style && (
-                                    <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80 text-xs text-slate-600 space-y-1.5">
-                                        <div className="font-bold text-slate-800 flex items-center gap-1.5">
-                                            <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
-                                            Professor-Style Formatting Applied ({note.professor_style.professor_name})
-                                        </div>
-                                        <div>
-                                            <span className="font-semibold">Structure Pattern:</span>{' '}
-                                            {note.professor_style.heading_hierarchy_pattern}
-                                        </div>
-                                        <div className="text-[11px] text-slate-500 italic">
-                                            {note.professor_style.style_disclaimer}
+                                {note.learning_objectives.length > 0 && (
+                                    <div className="pt-3 border-t border-slate-100 dark:border-slate-800">
+                                        <h3 className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-2">
+                                            Learning Objectives
+                                        </h3>
+                                        <div className="space-y-1.5">
+                                            {note.learning_objectives.map((obj, idx) => (
+                                                <div
+                                                    key={idx}
+                                                    className="flex items-start space-x-2 text-xs text-slate-700 dark:text-slate-300"
+                                                >
+                                                    <CheckCircle2 size={13} className="text-indigo-600 shrink-0 mt-0.5" />
+                                                    <span>{obj}</span>
+                                                </div>
+                                            ))}
                                         </div>
                                     </div>
                                 )}
-
-                                <div className="pt-3 border-t border-slate-100">
-                                    <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2.5">
-                                        3. Learning Objectives
-                                    </h3>
-                                    <div className="grid grid-cols-1 gap-2">
-                                        {note.learning_objectives.map((obj, idx) => (
-                                            <div
-                                                key={idx}
-                                                className="flex items-start gap-2.5 text-xs text-slate-700 bg-slate-50 p-2.5 rounded-xl border border-slate-200/60"
-                                            >
-                                                <CheckCircle2 className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
-                                                <span>{obj}</span>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
                             </div>
 
-                            {/* 4. Detailed Notes (with Regenerate Section button) */}
-                            <div className="space-y-4">
-                                <div className="flex items-center justify-between px-1">
-                                    <h2 className="text-xs font-bold uppercase tracking-wider text-blue-700">
-                                        4. Detailed Notes (Reference-Anchored + Classroom Enriched)
-                                    </h2>
-                                </div>
+                            {/* Detailed Notes */}
+                            <div id="sec-notes" className="space-y-4">
                                 {note.sections.map((sec, idx) => (
                                     <div
                                         key={idx}
-                                        className="bg-white rounded-2xl border border-slate-200/80 p-6 shadow-sm space-y-4"
+                                        className="rounded-xl border border-slate-200/90 bg-white p-6 shadow-2xs dark:border-slate-800 dark:bg-slate-900 space-y-3"
                                     >
                                         <div className="flex items-start justify-between gap-3">
-                                            <h3 className="text-lg font-bold text-slate-900">{sec.heading}</h3>
-                                            <div className="flex items-center gap-2 shrink-0">
+                                            <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                                                {sec.heading}
+                                            </h3>
+                                            <div className="flex items-center space-x-2 shrink-0">
                                                 {sec.is_exam_critical && (
-                                                    <span className="px-2.5 py-1 rounded-full bg-red-50 text-red-700 border border-red-200 text-[11px] font-bold">
-                                                        High Exam Priority
+                                                    <span className="rounded bg-rose-50 px-2 py-0.5 text-[10px] font-semibold text-rose-700 dark:bg-rose-950 dark:text-rose-300">
+                                                        Exam Critical
                                                     </span>
                                                 )}
                                                 <button
+                                                    type="button"
                                                     onClick={() => handleRegenerateSection(idx)}
                                                     disabled={regeneratingIdx === idx}
-                                                    title="Regenerate this section from grounded sources"
-                                                    className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-blue-50 text-slate-700 hover:text-blue-700 border border-slate-200 text-[11px] font-bold flex items-center gap-1 transition"
+                                                    className="p-1 rounded text-slate-400 hover:text-indigo-600 hover:bg-slate-50 dark:hover:bg-slate-800 transition"
+                                                    title="Regenerate Section"
                                                 >
                                                     <RefreshCw
-                                                        className={`w-3 h-3 ${
-                                                            regeneratingIdx === idx ? 'animate-spin text-blue-600' : ''
-                                                        }`}
+                                                        size={13}
+                                                        className={regeneratingIdx === idx ? 'animate-spin text-indigo-600' : ''}
                                                     />
-                                                    {regeneratingIdx === idx ? 'Regenerating...' : 'Regenerate Section'}
                                                 </button>
                                             </div>
                                         </div>
 
-                                        <div className="text-sm text-slate-700 leading-relaxed whitespace-pre-line">
+                                        <div className="text-xs sm:text-sm text-slate-700 dark:text-slate-300 leading-relaxed whitespace-pre-line">
                                             {sec.content}
                                         </div>
 
-                                        {sec.subsections.length > 0 && (
-                                            <div className="flex flex-wrap gap-2 pt-1">
-                                                {sec.subsections.map((sub, sIdx) => (
-                                                    <span
-                                                        key={sIdx}
-                                                        className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 text-xs font-medium"
-                                                    >
-                                                        • {sub}
-                                                    </span>
-                                                ))}
-                                            </div>
-                                        )}
-
                                         {sec.professor_emphasis && (
-                                            <div className="p-4 rounded-xl bg-blue-50/80 border-l-4 border-blue-700 text-xs text-blue-950">
-                                                <div className="font-bold uppercase tracking-wider text-blue-800 mb-1 flex items-center gap-1.5">
-                                                    <Award className="w-3.5 h-3.5" />
-                                                    Professor {note.professor} Verbal & Board Emphasis
+                                            <div className="rounded-lg bg-indigo-50/70 p-3 text-xs text-indigo-950 border-l-3 border-indigo-600 dark:bg-indigo-950/40 dark:text-indigo-200">
+                                                <div className="font-semibold text-[11px] mb-0.5">
+                                                    Prof. {note.professor}'s Emphasis:
                                                 </div>
-                                                {sec.professor_emphasis}
+                                                <p>{sec.professor_emphasis}</p>
                                             </div>
                                         )}
                                     </div>
                                 ))}
                             </div>
 
-                            {/* 5. Definitions & 6. Important Formulas */}
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                {/* 5. Definitions */}
-                                <div className="bg-white rounded-2xl border border-slate-200/80 p-6 shadow-sm space-y-3">
-                                    <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                                        5. Definitions ({note.key_definitions.length})
+                            {/* Definitions */}
+                            {note.key_definitions.length > 0 && (
+                                <div
+                                    id="sec-definitions"
+                                    className="rounded-xl border border-slate-200/90 bg-white p-6 shadow-2xs dark:border-slate-800 dark:bg-slate-900 space-y-3"
+                                >
+                                    <h3 className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider">
+                                        Definitions
                                     </h3>
-                                    <div className="space-y-3">
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                         {note.key_definitions.map((def, idx) => (
                                             <div
                                                 key={idx}
-                                                className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/70 space-y-1"
+                                                className="rounded-lg border border-slate-100 bg-slate-50/60 p-3 dark:border-slate-800 dark:bg-slate-800/40 space-y-1"
                                             >
-                                                <div className="text-xs font-bold text-slate-900">{def.term}</div>
-                                                <p className="text-xs text-slate-600 leading-relaxed">
+                                                <div className="text-xs font-bold text-slate-900 dark:text-white">
+                                                    {def.term}
+                                                </div>
+                                                <p className="text-xs text-slate-600 dark:text-slate-300">
                                                     {def.definition}
                                                 </p>
-                                                {def.source_citation && (
-                                                    <span className="inline-block text-[10px] font-semibold text-blue-700">
-                                                        Source: {def.source_citation}
-                                                    </span>
-                                                )}
                                             </div>
                                         ))}
                                     </div>
                                 </div>
+                            )}
 
-                                {/* 6. Important Formulas */}
-                                <div className="bg-white rounded-2xl border border-slate-200/80 p-6 shadow-sm space-y-3">
-                                    <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                                        6. Important Formulas ({note.important_formulas.length})
+                            {/* Important Formulas */}
+                            {note.important_formulas.length > 0 && (
+                                <div
+                                    id="sec-formulas"
+                                    className="rounded-xl border border-slate-200/90 bg-white p-6 shadow-2xs dark:border-slate-800 dark:bg-slate-900 space-y-3"
+                                >
+                                    <h3 className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider">
+                                        Key Formulas & Theorems
                                     </h3>
                                     <div className="space-y-3">
                                         {note.important_formulas.map((eq, idx) => (
                                             <div
                                                 key={idx}
-                                                className="p-3.5 rounded-xl bg-[#0B132B] text-white space-y-2"
+                                                className="rounded-lg border border-slate-200 bg-slate-950 p-3.5 text-white dark:border-slate-800 space-y-1.5"
                                             >
-                                                <div className="font-mono text-xs text-amber-300 bg-white/5 p-2.5 rounded-lg overflow-x-auto">
+                                                <div className="font-mono text-xs text-amber-300">
                                                     {eq.latex_or_text}
                                                 </div>
-                                                <p className="text-xs text-slate-300 leading-relaxed">
+                                                <p className="text-xs text-slate-300">
                                                     {eq.explanation}
                                                 </p>
-                                                {eq.variables && Object.keys(eq.variables).length > 0 && (
-                                                    <div className="pt-1 border-t border-slate-800 flex flex-wrap gap-2">
-                                                        {Object.entries(eq.variables).map(([k, v]) => (
-                                                            <span
-                                                                key={k}
-                                                                className="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-300"
-                                                            >
-                                                                <strong className="text-white">{k}:</strong> {v}
-                                                            </span>
-                                                        ))}
-                                                    </div>
-                                                )}
                                             </div>
                                         ))}
                                     </div>
                                 </div>
-                            </div>
-
-                            {/* 7. Professor's Examples */}
-                            {note.important_examples.length > 0 && (
-                                <div className="bg-white rounded-2xl border border-slate-200/80 p-6 shadow-sm space-y-4">
-                                    <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                                        7. Professor&apos;s Classroom Examples & Walkthroughs
-                                    </h3>
-                                    {note.important_examples.map((ex, idx) => (
-                                        <div
-                                            key={idx}
-                                            className="p-4 rounded-xl bg-amber-50/50 border border-amber-200/80 space-y-2"
-                                        >
-                                            <div className="flex items-center justify-between">
-                                                <h4 className="text-sm font-bold text-slate-900">{ex.title}</h4>
-                                                {ex.section_source && (
-                                                    <span className="text-[11px] font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded">
-                                                        {ex.section_source}
-                                                    </span>
-                                                )}
-                                            </div>
-                                            <p className="text-xs text-slate-700">{ex.description}</p>
-                                            <ol className="list-decimal list-inside space-y-1 text-xs text-slate-700 pt-1">
-                                                {ex.solution_steps.map((step, sIdx) => (
-                                                    <li key={sIdx} className="leading-relaxed">
-                                                        {step}
-                                                    </li>
-                                                ))}
-                                            </ol>
-                                        </div>
-                                    ))}
-                                </div>
                             )}
 
-                            {/* 8. Tables */}
+                            {/* Tables */}
                             {note.tables && note.tables.length > 0 && (
-                                <div className="bg-white rounded-2xl border border-slate-200/80 p-6 shadow-sm space-y-4">
-                                    <div className="flex items-center gap-2">
-                                        <TableIcon className="w-4 h-4 text-blue-700" />
-                                        <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                                            8. Extracted & Synthesized Tables ({note.tables.length})
-                                        </h3>
-                                    </div>
+                                <div
+                                    id="sec-tables"
+                                    className="rounded-xl border border-slate-200/90 bg-white p-6 shadow-2xs dark:border-slate-800 dark:bg-slate-900 space-y-3"
+                                >
+                                    <h3 className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider">
+                                        Synthesized Tables
+                                    </h3>
                                     <div className="space-y-4">
                                         {note.tables.map((tbl, tIdx) => (
                                             <div
                                                 key={tIdx}
-                                                className="rounded-xl border border-slate-200 overflow-hidden"
+                                                className="rounded-lg border border-slate-200 overflow-hidden dark:border-slate-800"
                                             >
-                                                <div className="bg-slate-50 px-4 py-2.5 border-b border-slate-200 flex items-center justify-between">
-                                                    <span className="text-xs font-bold text-slate-900">
-                                                        {tbl.title}
-                                                    </span>
-                                                    {tbl.source_attribution && (
-                                                        <span className="text-[10px] font-semibold text-blue-700">
-                                                            {tbl.source_attribution}
-                                                        </span>
-                                                    )}
+                                                <div className="bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-800 dark:bg-slate-800 dark:text-slate-200">
+                                                    {tbl.title}
                                                 </div>
                                                 <div className="overflow-x-auto">
-                                                    <table className="w-full text-left border-collapse text-xs">
-                                                        <thead>
-                                                            <tr className="bg-slate-100/80 text-slate-700">
+                                                    <table className="w-full text-left text-xs">
+                                                        <thead className="bg-slate-100 text-slate-700 dark:bg-slate-800/80 dark:text-slate-300">
+                                                            <tr>
                                                                 {tbl.headers.map((h, hIdx) => (
-                                                                    <th
-                                                                        key={hIdx}
-                                                                        className="py-2.5 px-3 font-bold border-b border-slate-200"
-                                                                    >
+                                                                    <th key={hIdx} className="p-2.5 font-semibold">
                                                                         {h}
                                                                     </th>
                                                                 ))}
                                                             </tr>
                                                         </thead>
-                                                        <tbody className="divide-y divide-slate-200/70">
+                                                        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                                                             {tbl.rows.map((row, rIdx) => (
-                                                                <tr key={rIdx} className="hover:bg-slate-50/70">
+                                                                <tr key={rIdx} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
                                                                     {row.map((cell, cIdx) => (
-                                                                        <td
-                                                                            key={cIdx}
-                                                                            className="py-2 px-3 text-slate-700"
-                                                                        >
+                                                                        <td key={cIdx} className="p-2.5 text-slate-700 dark:text-slate-300">
                                                                             {cell}
                                                                         </td>
                                                                     ))}
@@ -563,357 +616,198 @@ export const MasterNotesView: React.FC<MasterNotesViewProps> = ({
                                 </div>
                             )}
 
-                            {/* 9. Reconstructed Smart Diagrams (SVG + Mermaid + Original Whiteboard Retention) */}
-                            <div className="bg-white rounded-2xl border border-slate-200/80 p-6 shadow-sm space-y-4">
-                                <div className="flex items-center justify-between">
-                                    <div className="flex items-center gap-2">
-                                        <GitBranch className="w-4 h-4 text-indigo-700" />
-                                        <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                                            9. Smart Reconstructed Diagrams ({diagrams.length})
-                                        </h3>
-                                    </div>
-                                    <button
-                                        onClick={onOpenDiagrams}
-                                        className="text-xs font-bold text-indigo-700 hover:underline"
-                                    >
-                                        Open Full Diagram Studio →
-                                    </button>
-                                </div>
-
-                                <div className="space-y-4">
-                                    {diagrams.map((diag) => {
-                                        const showOrig = !!showOriginalForDiag[diag.id];
-                                        return (
+                            {/* Smart Diagrams */}
+                            {diagrams.length > 0 && (
+                                <div
+                                    id="sec-diagrams"
+                                    className="rounded-xl border border-slate-200/90 bg-white p-6 shadow-2xs dark:border-slate-800 dark:bg-slate-900 space-y-3"
+                                >
+                                    <h3 className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider">
+                                        Reconstructed Smart Diagrams
+                                    </h3>
+                                    <div className="space-y-4">
+                                        {diagrams.map((diag) => (
                                             <div
                                                 key={diag.id}
-                                                className="p-4 rounded-xl border border-slate-200 bg-slate-50/60 space-y-3"
+                                                className="rounded-lg border border-slate-200 p-4 dark:border-slate-800 space-y-2"
                                             >
-                                                <div className="flex flex-wrap items-center justify-between gap-2">
-                                                    <div>
-                                                        <div className="flex items-center gap-2">
-                                                            <h4 className="text-sm font-bold text-slate-900">
-                                                                {diag.title}
-                                                            </h4>
-                                                            {diag.is_approximation && (
-                                                                <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-800 text-[10px] font-bold">
-                                                                    Labeled Digital Approximation
-                                                                </span>
-                                                            )}
-                                                        </div>
-                                                        <p className="text-xs text-slate-500 mt-0.5">
-                                                            {diag.description}
-                                                        </p>
-                                                    </div>
-                                                    {diag.original_image_url && (
-                                                        <button
-                                                            onClick={() =>
-                                                                setShowOriginalForDiag((prev) => ({
-                                                                    ...prev,
-                                                                    [diag.id]: !prev[diag.id],
-                                                                }))
-                                                            }
-                                                            className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-xs font-bold text-slate-700 hover:bg-slate-100 flex items-center gap-1"
-                                                        >
-                                                            <Eye className="w-3.5 h-3.5 text-blue-600" />
-                                                            {showOrig
-                                                                ? 'Show Digital Vector SVG'
-                                                                : 'Compare Original Whiteboard'}
-                                                        </button>
-                                                    )}
-                                                </div>
-
-                                                {showOrig && diag.original_image_url ? (
-                                                    <div className="bg-slate-900 rounded-xl p-4 text-center space-y-2">
-                                                        <div className="text-[11px] font-bold text-amber-300 uppercase">
-                                                            Retained Original Whiteboard Source ({diag.reconstructed_from})
-                                                        </div>
-                                                        <img
-                                                            src={diag.original_image_url}
-                                                            alt={diag.title}
-                                                            className="max-h-64 mx-auto rounded border border-slate-700 object-contain"
-                                                        />
-                                                    </div>
-                                                ) : diag.svg_code ? (
+                                                <h4 className="text-xs font-bold text-slate-900 dark:text-white">
+                                                    {diag.title}
+                                                </h4>
+                                                <p className="text-[11px] text-slate-500">
+                                                    {diag.description}
+                                                </p>
+                                                {diag.svg_code ? (
                                                     <div
-                                                        className="w-full overflow-x-auto rounded-xl bg-white p-2 border border-slate-200/80"
+                                                        className="w-full overflow-x-auto rounded-lg bg-white p-2 border border-slate-100 dark:border-slate-800"
                                                         dangerouslySetInnerHTML={{ __html: diag.svg_code }}
                                                     />
                                                 ) : (
-                                                    <pre className="p-3 rounded-xl bg-slate-900 text-emerald-300 font-mono text-xs overflow-x-auto">
+                                                    <pre className="p-3 rounded-lg bg-slate-900 text-emerald-300 font-mono text-xs overflow-x-auto">
                                                         {diag.mermaid_code}
                                                     </pre>
                                                 )}
                                             </div>
-                                        );
-                                    })}
-                                </div>
-                            </div>
-
-                            {/* 11. Key Takeaways & 12. Exam Revision Summary */}
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                <div className="bg-white rounded-2xl border border-slate-200/80 p-6 shadow-sm space-y-3">
-                                    <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                                        11. Key Takeaways
-                                    </h3>
-                                    <ul className="space-y-2">
-                                        {note.key_takeaways.map((kt, i) => (
-                                            <li
-                                                key={i}
-                                                className="flex items-start gap-2 text-xs text-slate-700 leading-relaxed"
-                                            >
-                                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
-                                                <span>{kt}</span>
-                                            </li>
                                         ))}
-                                    </ul>
+                                    </div>
                                 </div>
-
-                                <div className="bg-white rounded-2xl border border-slate-200/80 p-6 shadow-sm space-y-3">
-                                    <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                                        12. Exam Revision Summary
-                                    </h3>
-                                    <ul className="space-y-2">
-                                        {(note.exam_revision_summary || note.key_takeaways).map((rev, i) => (
-                                            <li
-                                                key={i}
-                                                className="flex items-start gap-2 text-xs text-slate-700 leading-relaxed"
-                                            >
-                                                <Award className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
-                                                <span>{rev}</span>
-                                            </li>
-                                        ))}
-                                    </ul>
-                                </div>
-                            </div>
+                            )}
                         </>
                     )}
 
+                    {/* Markdown Editor Mode with Auto-Save */}
                     {activeMode === 'markdown' && (
-                        <div className="bg-white rounded-2xl border border-slate-200/80 p-6 shadow-sm space-y-4">
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                                <div>
-                                    <h3 className="text-sm font-bold text-slate-900">
-                                        Rich Markdown Master Note Editor (All 14 Sections)
-                                    </h3>
-                                    <p className="text-xs text-slate-500">
-                                        Edits auto-save automatically and apply to PDF, DOCX, and Markdown exports.
-                                    </p>
-                                </div>
-                                <div className="flex items-center gap-2">
+                        <div className="rounded-xl border border-slate-200/90 bg-white p-6 shadow-2xs dark:border-slate-800 dark:bg-slate-900 space-y-4">
+                            <div className="flex items-center justify-between">
+                                <span className="text-xs font-semibold text-slate-500">
+                                    Markdown Editor
+                                </span>
+                                <div className="flex items-center space-x-2">
                                     {autoSaveStatus === 'saving' && (
-                                        <span className="text-xs text-amber-600 font-semibold">
-                                            Auto-saving...
-                                        </span>
+                                        <span className="text-[11px] text-amber-600 font-medium">Auto-saving...</span>
                                     )}
                                     {autoSaveStatus === 'saved' && (
-                                        <span className="text-xs text-emerald-600 font-semibold">
-                                            ✓ Auto-saved
-                                        </span>
+                                        <span className="text-[11px] text-emerald-600 font-medium">✓ Saved</span>
                                     )}
                                     <button
+                                        type="button"
                                         onClick={handleSaveMarkdown}
                                         disabled={saving}
-                                        className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold flex items-center gap-1.5 transition"
+                                        className="inline-flex items-center space-x-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500 transition"
                                     >
-                                        <Save className="w-3.5 h-3.5" />
-                                        {saveToast ? 'Saved Changes!' : saving ? 'Saving...' : 'Save Master Note'}
+                                        <Save size={13} />
+                                        <span>Save</span>
                                     </button>
                                 </div>
                             </div>
-                            <div>
-                                <label className="block text-xs font-semibold text-slate-600 mb-1">
-                                    Document Title
-                                </label>
-                                <input
-                                    type="text"
-                                    value={titleDraft}
-                                    onChange={(e) => setTitleDraft(e.target.value)}
-                                    className="w-full px-3.5 py-2 text-sm font-bold rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-600"
-                                />
-                            </div>
+
+                            <input
+                                type="text"
+                                value={titleDraft}
+                                onChange={(e) => setTitleDraft(e.target.value)}
+                                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-bold text-slate-900 focus:outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                            />
+
                             <textarea
                                 value={markdownDraft}
                                 onChange={(e) => handleMarkdownChange(e.target.value)}
                                 rows={24}
-                                className="w-full p-4 rounded-xl bg-slate-900 text-slate-100 font-mono text-xs leading-relaxed focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                className="w-full rounded-lg border border-slate-200 p-4 font-mono text-xs leading-relaxed text-slate-800 focus:outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
                             />
                         </div>
                     )}
+                </div>
 
-                    {activeMode === 'split_board' && (
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                            <div className="bg-slate-900 text-slate-100 rounded-2xl p-6 shadow-sm space-y-3">
-                                <div className="text-xs font-bold uppercase tracking-wider text-amber-400">
-                                    Stage 4: Raw Whiteboard & Slide OCR Transcription
-                                </div>
-                                <pre className="text-xs font-mono text-slate-300 whitespace-pre-wrap leading-relaxed">
-                                    {note.raw_board_transcription}
-                                </pre>
+                {/* 3. Collapsible Right Side Panel (Ask AI & Citations) (~3 cols) */}
+                {isRightPanelOpen && (
+                    <div className="lg:col-span-3 sticky top-20 space-y-3">
+                        <div className="rounded-xl border border-slate-200/90 bg-white p-4 shadow-2xs dark:border-slate-800 dark:bg-slate-900 space-y-3">
+                            {/* Panel Tab Switcher */}
+                            <div className="flex rounded-lg border border-slate-200 bg-slate-50 p-0.5 dark:border-slate-800 dark:bg-slate-800">
+                                <button
+                                    type="button"
+                                    onClick={() => setRightPanelTab('ask_ai')}
+                                    className={`flex-1 rounded-md py-1 text-[11px] font-semibold transition ${
+                                        rightPanelTab === 'ask_ai'
+                                            ? 'bg-white text-indigo-700 shadow-2xs dark:bg-slate-700 dark:text-indigo-300'
+                                            : 'text-slate-500 hover:text-slate-900 dark:text-slate-400'
+                                    }`}
+                                >
+                                    Ask AI
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setRightPanelTab('sources')}
+                                    className={`flex-1 rounded-md py-1 text-[11px] font-semibold transition ${
+                                        rightPanelTab === 'sources'
+                                            ? 'bg-white text-indigo-700 shadow-2xs dark:bg-slate-700 dark:text-indigo-300'
+                                            : 'text-slate-500 hover:text-slate-900 dark:text-slate-400'
+                                    }`}
+                                >
+                                    Sources ({note.citations.length})
+                                </button>
                             </div>
-                            <div className="bg-white rounded-2xl border border-slate-200/80 p-6 shadow-sm space-y-3">
-                                <div className="text-xs font-bold uppercase tracking-wider text-blue-700">
-                                    Stage 7: Structured Master Note Synthesis
+
+                            {/* Ask AI Tab */}
+                            {rightPanelTab === 'ask_ai' && (
+                                <div className="space-y-3">
+                                    {onOpenChat && (
+                                        <button
+                                            type="button"
+                                            onClick={() => onOpenChat(note)}
+                                            className="w-full flex items-center justify-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50/70 dark:bg-indigo-950/40 dark:border-indigo-800 py-1.5 px-2 text-[11px] font-semibold text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 transition"
+                                        >
+                                            <Sparkles size={13} />
+                                            <span>Open in Notebook Chat (Full Grounded RAG)</span>
+                                        </button>
+                                    )}
+                                    <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                                        {qaHistory.map((item, idx) => (
+                                            <div
+                                                key={idx}
+                                                className="rounded-lg bg-slate-50 p-2.5 text-xs dark:bg-slate-800/60 space-y-1"
+                                            >
+                                                <div className="font-semibold text-slate-900 dark:text-white">
+                                                    {item.q}
+                                                </div>
+                                                <p className="text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed">
+                                                    {item.a}
+                                                </p>
+                                                <div className="text-[10px] text-indigo-600 dark:text-indigo-400">
+                                                    Ref: {item.citation}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+
+                                    <form onSubmit={handleAskQuestion} className="flex gap-1.5">
+                                        <input
+                                            type="text"
+                                            value={qaQuery}
+                                            onChange={(e) => setQaQuery(e.target.value)}
+                                            placeholder="Ask about this note..."
+                                            className="flex-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs focus:outline-none focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                                        />
+                                        <button
+                                            type="submit"
+                                            disabled={qaLoading}
+                                            className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+                                        >
+                                            {qaLoading ? '...' : 'Ask'}
+                                        </button>
+                                    </form>
                                 </div>
-                                <div className="space-y-3 text-xs text-slate-700 leading-relaxed">
-                                    <p className="font-semibold text-slate-900">{note.summary}</p>
-                                    {note.sections.map((s, i) => (
-                                        <div key={i} className="p-3 rounded-xl bg-slate-50 border border-slate-200/60">
-                                            <div className="font-bold text-slate-900 mb-1">{s.heading}</div>
-                                            <p>{s.content}</p>
+                            )}
+
+                            {/* Sources Tab */}
+                            {rightPanelTab === 'sources' && (
+                                <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+                                    {note.citations.map((cit) => (
+                                        <div
+                                            key={cit.citation_id}
+                                            className="rounded-lg border border-slate-100 bg-slate-50/70 p-2.5 text-xs dark:border-slate-800 dark:bg-slate-800/50 space-y-1"
+                                        >
+                                            <div className="flex items-center justify-between">
+                                                <span className="font-semibold text-slate-800 dark:text-slate-200 truncate">
+                                                    {cit.source_name}
+                                                </span>
+                                                <span className="text-[9px] rounded bg-indigo-50 px-1 py-0.2 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">
+                                                    {cit.section_tag || 'Official'}
+                                                </span>
+                                            </div>
+                                            <div className="text-[10px] text-slate-400">
+                                                {cit.page_or_region}
+                                            </div>
+                                            <p className="text-[11px] text-slate-600 dark:text-slate-300 italic">
+                                                &ldquo;{cit.quote}&rdquo;
+                                            </p>
                                         </div>
                                     ))}
                                 </div>
-                            </div>
-                        </div>
-                    )}
-                </div>
-
-                {/* Right Sidebar: 10. High-Priority Topics, 13. Citations, 14. Uncertain Content & Grounded Q&A (4 cols) */}
-                <div className="lg:col-span-4 space-y-6">
-                    {/* 10. High-Priority Topics */}
-                    <div className="bg-white rounded-2xl border border-slate-200/80 p-5 shadow-sm space-y-3">
-                        <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-red-700">
-                            <Sparkles className="w-4 h-4" />
-                            10. High-Priority Exam Topics
-                        </div>
-                        <div className="space-y-2.5">
-                            {note.exam_focused_concepts.map((c, idx) => (
-                                <div
-                                    key={idx}
-                                    className="p-3 rounded-xl bg-red-50/50 border border-red-200/70 space-y-1"
-                                >
-                                    <div className="flex items-center justify-between">
-                                        <span className="text-xs font-bold text-slate-900">{c.topic}</span>
-                                        <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-red-100 text-red-800">
-                                            {c.frequency_or_weight}
-                                        </span>
-                                    </div>
-                                    <p className="text-[11px] text-slate-600">{c.reason}</p>
-                                </div>
-                            ))}
+                            )}
                         </div>
                     </div>
-
-                    {/* 13. Source References */}
-                    <div className="bg-white rounded-2xl border border-slate-200/80 p-5 shadow-sm space-y-3">
-                        <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-500">
-                            <Quote className="w-4 h-4 text-blue-600" />
-                            13. Source References ({note.citations.length})
-                        </div>
-                        <div className="space-y-2.5">
-                            {note.citations.map((cit) => (
-                                <div
-                                    key={cit.citation_id}
-                                    className="p-3 rounded-xl bg-slate-50 border border-slate-200/70 space-y-1"
-                                >
-                                    <div className="flex items-center justify-between">
-                                        <span className="text-xs font-bold text-slate-800 truncate">
-                                            {cit.source_name}
-                                        </span>
-                                        {cit.section_tag && (
-                                            <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-blue-100 text-blue-800">
-                                                {cit.section_tag}
-                                            </span>
-                                        )}
-                                    </div>
-                                    <div className="text-[11px] text-slate-400 font-medium">
-                                        {cit.source_type} • {cit.page_or_region}
-                                    </div>
-                                    <p className="text-[11px] text-slate-600 italic">&ldquo;{cit.quote}&rdquo;</p>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-
-                    {/* 14. Uncertain Content & Source Conflicts */}
-                    {(note.needs_verification.length > 0 ||
-                        (note.source_conflicts && note.source_conflicts.length > 0)) && (
-                        <div className="bg-amber-50/70 rounded-2xl border border-amber-200 p-5 space-y-3">
-                            <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-amber-900">
-                                <AlertTriangle className="w-4 h-4 text-amber-600" />
-                                14. Uncertain Content & Source Conflicts
-                            </div>
-
-                            {note.source_conflicts &&
-                                note.source_conflicts.map((conf, cIdx) => (
-                                    <div
-                                        key={`conf_${cIdx}`}
-                                        className="p-3 rounded-xl bg-white border border-amber-300 text-xs space-y-1.5"
-                                    >
-                                        <div className="font-bold text-amber-950 flex items-center gap-1.5">
-                                            <ShieldAlert className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                                            Conflict Flagged: {conf.topic}
-                                        </div>
-                                        <p className="text-[11px] text-slate-700">
-                                            <strong>Classroom:</strong> {conf.classroom_statement}
-                                        </p>
-                                        <p className="text-[11px] text-slate-700">
-                                            <strong>Official Reference:</strong> {conf.reference_statement}
-                                        </p>
-                                        <p className="text-[11px] text-emerald-800 bg-emerald-50 p-2 rounded-lg font-medium">
-                                            <strong>Resolution:</strong> {conf.resolution_note}
-                                        </p>
-                                    </div>
-                                ))}
-
-                            {note.needs_verification.map((nv, idx) => (
-                                <div
-                                    key={idx}
-                                    className="p-3 rounded-xl bg-white border border-amber-200/80 text-xs space-y-1"
-                                >
-                                    <div className="font-bold text-slate-900">{nv.item}</div>
-                                    <p className="text-slate-600 text-[11px]">{nv.reason}</p>
-                                    {nv.source_doc && (
-                                        <span className="text-[10px] font-semibold text-amber-800">
-                                            Source: {nv.source_doc}
-                                        </span>
-                                    )}
-                                </div>
-                            ))}
-                        </div>
-                    )}
-
-                    {/* Source-Grounded Note Q&A Assistant */}
-                    <div className="bg-white rounded-2xl border border-slate-200/80 p-5 shadow-sm space-y-3">
-                        <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-blue-800">
-                            <MessageSquare className="w-4 h-4" />
-                            Ask This Master Note (Source-Grounded)
-                        </div>
-                        <div className="space-y-2.5 max-h-64 overflow-y-auto pr-1">
-                            {qaHistory.map((item, idx) => (
-                                <div
-                                    key={idx}
-                                    className="p-3 rounded-xl bg-slate-50 border border-slate-200/60 text-xs space-y-1.5"
-                                >
-                                    <div className="font-bold text-slate-900 flex items-center gap-1.5">
-                                        <HelpCircle className="w-3.5 h-3.5 text-blue-600 shrink-0" />
-                                        {item.q}
-                                    </div>
-                                    <p className="text-slate-600 leading-relaxed whitespace-pre-line">{item.a}</p>
-                                    <div className="text-[10px] font-semibold text-blue-700">
-                                        Grounded Citation: {item.citation}
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                        <form onSubmit={handleAskQuestion} className="flex gap-2 pt-1">
-                            <input
-                                type="text"
-                                value={qaQuery}
-                                onChange={(e) => setQaQuery(e.target.value)}
-                                placeholder="Ask about a formula, conflict, or definition..."
-                                className="flex-1 px-3 py-2 text-xs rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-600"
-                            />
-                            <button
-                                type="submit"
-                                disabled={qaLoading}
-                                className="px-3.5 py-2 rounded-xl bg-[#0B132B] text-white text-xs font-bold hover:bg-slate-800 transition disabled:opacity-50"
-                            >
-                                {qaLoading ? '...' : 'Ask'}
-                            </button>
-                        </form>
-                    </div>
-                </div>
+                )}
             </div>
         </div>
     );

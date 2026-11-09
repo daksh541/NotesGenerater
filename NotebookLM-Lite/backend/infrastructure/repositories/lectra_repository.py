@@ -20,12 +20,20 @@ from uuid import uuid4
 
 from ...domain.lectra import (
     ChapterModel,
+    ChatConversation,
+    ChatMessage,
     CommunityReview,
     ConflictItem,
+    ContributionHistoryItem,
+    ContributorProfile,
     CourseModel,
     DefinitionItem,
+    DuplicateCheckRequest,
+    DuplicateCheckResult,
     EquationItem,
     ExamConceptItem,
+    ExamPriorityAnalysis,
+    ExamPriorityTopic,
     ExamRevisionSheet,
     ExampleItem,
     FlashcardItem,
@@ -34,16 +42,21 @@ from ...domain.lectra import (
     NoteSection,
     NoteTable,
     NotificationItem,
+    PracticeEvaluationResponse,
+    PracticeQuestionItem,
     ProcessingPipelineJob,
     ProfessorProfile,
     ProfessorStyleAnalysis,
+    QuizAttempt,
     SectionComparisonResult,
     SectionId,
     SectionVaultNote,
+    SharingScope,
     SmartDiagram,
     SourceCitation,
     SourceMaterialType,
     StorageBucketType,
+    StudentKitProgress,
     StudyKit,
     SubjectModel,
     UncertainWordItem,
@@ -513,9 +526,53 @@ class LectraRepository:
                 used INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS lectra_quiz_attempts (
+                id TEXT PRIMARY KEY,
+                study_kit_id TEXT NOT NULL,
+                lecture_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                score INTEGER NOT NULL,
+                total INTEGER NOT NULL,
+                percentage REAL NOT NULL,
+                passed INTEGER NOT NULL,
+                time_taken_seconds INTEGER NOT NULL,
+                answers_json TEXT NOT NULL DEFAULT '{}',
+                topic_performance_json TEXT NOT NULL DEFAULT '{}',
+                breakdown_json TEXT NOT NULL DEFAULT '[]',
+                created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_lectra_quiz_attempts_kit ON lectra_quiz_attempts(study_kit_id);
+            CREATE INDEX IF NOT EXISTS idx_lectra_quiz_attempts_user ON lectra_quiz_attempts(user_id);
+
+            CREATE TABLE IF NOT EXISTS lectra_student_kit_progress (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                kit_id TEXT NOT NULL,
+                cards_mastered INTEGER NOT NULL DEFAULT 0,
+                cards_needs_review INTEGER NOT NULL DEFAULT 0,
+                total_cards INTEGER NOT NULL DEFAULT 0,
+                flashcards_progress_json TEXT NOT NULL DEFAULT '{}',
+                quizzes_taken INTEGER NOT NULL DEFAULT 0,
+                best_quiz_score REAL,
+                last_quiz_score REAL,
+                last_practiced_at TEXT NOT NULL,
+                UNIQUE(user_id, kit_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_lectra_progress_user_kit ON lectra_student_kit_progress(user_id, kit_id);
             """
         )
         # Ensure new columns exist on existing databases
+        self._ensure_column("lectra_study_kits", "user_id", "TEXT NOT NULL DEFAULT 'usr_lectra_default'")
+        self._ensure_column("lectra_study_kits", "professor", "TEXT NOT NULL DEFAULT ''")
+        self._ensure_column("lectra_study_kits", "subject_code", "TEXT NOT NULL DEFAULT ''")
+        self._ensure_column("lectra_study_kits", "kit_type", "TEXT NOT NULL DEFAULT 'comprehensive'")
+        self._ensure_column("lectra_study_kits", "practice_questions_json", "TEXT NOT NULL DEFAULT '[]'")
+        self._ensure_column("lectra_study_kits", "one_page_summary", "TEXT NOT NULL DEFAULT ''")
+        self._ensure_column("lectra_study_kits", "detailed_summary", "TEXT NOT NULL DEFAULT ''")
+        self._ensure_column("lectra_study_kits", "last_minute_summary", "TEXT NOT NULL DEFAULT ''")
+        self._ensure_column("lectra_study_kits", "exam_priority_json", "TEXT NOT NULL DEFAULT '{}'")
+        self._ensure_column("lectra_study_kits", "updated_at", "TEXT")
         self._ensure_column("lectra_users", "university_id", "TEXT")
         self._ensure_column("lectra_users", "course_id", "TEXT")
         self._ensure_column("lectra_users", "subject_id", "TEXT")
@@ -567,13 +624,79 @@ class LectraRepository:
 
         self._ensure_column("lectra_vault_notes", "master_notes_id", "TEXT")
         self._ensure_column("lectra_vault_notes", "visibility", "TEXT NOT NULL DEFAULT 'section'")
+        self._ensure_column("lectra_vault_notes", "sharing_scope", "TEXT NOT NULL DEFAULT 'all_sections'")
+        self._ensure_column("lectra_vault_notes", "allowed_sections_json", "TEXT NOT NULL DEFAULT '[]'")
+        self._ensure_column("lectra_vault_notes", "enrolled_course", "TEXT NOT NULL DEFAULT 'B.S. Computer Science & AI'")
+        self._ensure_column("lectra_vault_notes", "explicit_permission_granted", "INTEGER NOT NULL DEFAULT 1")
+        self._ensure_column("lectra_vault_notes", "official_source_reference", "TEXT")
+        self._ensure_column("lectra_vault_notes", "sources_count", "INTEGER NOT NULL DEFAULT 1")
+        self._ensure_column("lectra_vault_notes", "upload_date", "TEXT")
+
+        self._ensure_column("lectra_community_reviews", "replies_json", "TEXT NOT NULL DEFAULT '[]'")
+        self._ensure_column("lectra_community_reviews", "verified_against_official_source", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("lectra_community_reviews", "official_source_citation", "TEXT")
+
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS lectra_contribution_history (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                user_name TEXT NOT NULL,
+                user_section TEXT NOT NULL,
+                action_type TEXT NOT NULL,
+                target_note_id TEXT NOT NULL,
+                target_title TEXT NOT NULL,
+                subject_code TEXT NOT NULL,
+                chapter TEXT NOT NULL,
+                details TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            """
+        )
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_contrib_user ON lectra_contribution_history(user_id);")
 
         self._ensure_column("lectra_pipeline_jobs", "total_stages", "INTEGER NOT NULL DEFAULT 10")
         self._ensure_column("lectra_pipeline_jobs", "retry_count", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("lectra_pipeline_jobs", "job_payload_json", "TEXT")
 
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS lectra_chat_conversations (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                workspace_id TEXT,
+                subject_code TEXT,
+                chapter TEXT,
+                lecture_id TEXT,
+                selected_source_ids_json TEXT NOT NULL DEFAULT '[]',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            """
+        )
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_chat_conv_user ON lectra_chat_conversations(user_id);")
+
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS lectra_chat_messages (
+                id TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                citations_json TEXT NOT NULL DEFAULT '[]',
+                suggested_questions_json TEXT NOT NULL DEFAULT '[]',
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(conversation_id) REFERENCES lectra_chat_conversations(id) ON DELETE CASCADE
+            );
+            """
+        )
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_chat_msg_conv ON lectra_chat_messages(conversation_id);")
+
         self._conn.commit()
         self._ensure_default_workspace()
+        self._ensure_default_chat_conversation()
 
     def _ensure_default_workspace(self) -> None:
         cursor = self._conn.cursor()
@@ -599,12 +722,36 @@ class LectraRepository:
             )
             self.save_workspace(ws)
 
+    def _sync_phase5_seed_kits(self) -> None:
+        try:
+            from ...core.services.lectra_synthesis_service import LectraSynthesisService
+            synth = LectraSynthesisService(repo=self)
+            for lec_id in ["lec_raft_consensus_01", "lec_attention_02"]:
+                note = self.get_master_note(lec_id)
+                if note:
+                    kit = synth.generate_study_kit_from_master_note(
+                        master_note=note,
+                        kit_type="comprehensive",
+                        num_mcqs=5,
+                        user_id="usr_lectra_default",
+                    )
+                    if lec_id == "lec_raft_consensus_01":
+                        kit.id = "skit_raft_01"
+                    elif lec_id == "lec_attention_02":
+                        kit.id = "skit_attn_02"
+                    self.save_study_kit(kit)
+        except Exception:
+            pass
+
     def _seed_initial_data(self) -> None:
         """Seed realistic university courses, professors across sections A-I, master notes, study kits, and vault."""
         cursor = self._conn.cursor()
         cursor.execute("SELECT COUNT(*) FROM lectra_users")
         if cursor.fetchone()[0] > 0:
-            return  # Already seeded
+            cursor.execute("SELECT COUNT(*) FROM lectra_study_kits WHERE id = 'skit_raft_01'")
+            if cursor.fetchone()[0] == 0:
+                self._sync_phase5_seed_kits()
+            return
 
         # 1. Default user profile
         default_user = UserProfile(
@@ -912,6 +1059,11 @@ Every entry consists of `(Term, Index, Command)`. The leader guarantees that onc
         raft_study_kit = StudyKit(
             id="skit_raft_01",
             lecture_id=lec1_id,
+            master_notes_id=lec1_id,
+            user_id="usr_lectra_default",
+            subject_code="CS-244",
+            professor="Dr. Aris Thorne",
+            kit_type="comprehensive",
             title="Raft Protocol Complete Mastery Kit",
             subject_name="Distributed Systems & Cloud Computing",
             chapter="Chapter 4: Consensus in Fault-Tolerant Clusters",
@@ -929,7 +1081,8 @@ Every entry consists of `(Term, Index, Command)`. The leader guarantees that onc
                     correct_option_index=1,
                     explanation="For N=7 nodes, a strict majority quorum is floor(7/2) + 1 = 4 nodes. Thus, the cluster can tolerate up to 3 crash failures.",
                     difficulty="easy",
-                    topic_reference="Cluster Quorum Sizing"
+                    topic_reference="Cluster Quorum Sizing",
+                    source_reference="Section 1: Cluster States & Quorum Bounds"
                 ),
                 MCQQuestion(
                     id="mcq_raft_2",
@@ -943,7 +1096,8 @@ Every entry consists of `(Term, Index, Command)`. The leader guarantees that onc
                     correct_option_index=1,
                     explanation="As demonstrated in Figure 8 of the Raft paper, an older term entry replicated on a majority can still be overwritten by a subsequent leader. Raft solves this by requiring the leader to commit at least one entry from its current term.",
                     difficulty="hard",
-                    topic_reference="Figure 8 Corner Case"
+                    topic_reference="Figure 8 Corner Case",
+                    source_reference="Section 3: The Commit Condition & Current Term Constraint"
                 ),
                 MCQQuestion(
                     id="mcq_raft_3",
@@ -957,7 +1111,38 @@ Every entry consists of `(Term, Index, Command)`. The leader guarantees that onc
                     correct_option_index=1,
                     explanation="The leader includes prevLogIndex and prevLogTerm. If the follower has a mismatch at that exact slot, it rejects the RPC, initiating log backtracking.",
                     difficulty="medium",
-                    topic_reference="Log Matching Property"
+                    topic_reference="Log Matching Property",
+                    source_reference="Section 2: Log Replication & The Log Matching Invariant"
+                ),
+                MCQQuestion(
+                    id="mcq_raft_4",
+                    question="What condition must hold for a follower node to cast its vote in favor of a candidate requesting votes via RequestVote RPC?",
+                    options=[
+                        "The candidate's log must be at least as up-to-date as the follower's own log, and the follower has not voted for another candidate in this term",
+                        "The candidate must have lower network ping latency than the previous leader",
+                        "The candidate must currently hold the uncommitted write lock",
+                        "The candidate must have completed a round of leader heartbeats within 100ms"
+                    ],
+                    correct_option_index=0,
+                    explanation="Under Raft leader completeness rules, voters deny votes if the candidate's last log entry has a lower term, or the same term but a shorter log.",
+                    difficulty="medium",
+                    topic_reference="Leader Election Safety",
+                    source_reference="Section 1: RequestVote Restrictions"
+                ),
+                MCQQuestion(
+                    id="mcq_raft_5",
+                    question="What happens when electionTimeout is configured to be strictly less than or equal to the leader heartbeat interval?",
+                    options=[
+                        "The cluster achieves 10x higher write throughput",
+                        "Followers continuously time out before receiving heartbeats, triggering endless spurious elections and destabilizing the cluster",
+                        "Disk storage writes become fully non-blocking without write-ahead logging",
+                        "Candidate votes automatically achieve Byzantine consensus"
+                    ],
+                    correct_option_index=1,
+                    explanation="If electionTimeout <= heartbeat, followers fail to hear from the leader in time and trigger spurious elections constantly. Dr. Thorne highlighted this boundary failure.",
+                    difficulty="hard",
+                    topic_reference="Timer Boundary Conditions",
+                    source_reference="Dr. Thorne Section A Blackboard Proof"
                 )
             ],
             flashcards=[
@@ -965,6 +1150,8 @@ Every entry consists of `(Term, Index, Command)`. The leader guarantees that onc
                     id="fc_raft_1",
                     question="What is the Log Matching Property in Raft?",
                     answer="If two entries in different logs have the same index and term, they store the same command AND their logs are identical in all preceding entries.",
+                    front="What is the Log Matching Property in Raft?",
+                    back="If two entries in different logs have the same index and term, they store the same command AND their logs are identical in all preceding entries.",
                     explanation="Enforced inductively by AppendEntries checking prevLogIndex and prevLogTerm.",
                     difficulty="medium",
                     review_status="needs_review",
@@ -974,6 +1161,8 @@ Every entry consists of `(Term, Index, Command)`. The leader guarantees that onc
                     id="fc_raft_2",
                     question="How does Raft break split-vote ties during Leader Election?",
                     answer="By choosing election timeouts randomly from a fixed interval (e.g., 150ms-300ms) on each node.",
+                    front="How does Raft break split-vote ties during Leader Election?",
+                    back="By choosing election timeouts randomly from a fixed interval (e.g., 150ms-300ms) on each node.",
                     explanation="This spreads out timeouts so one server times out before others, collects votes, and asserts leadership.",
                     difficulty="easy",
                     review_status="mastered",
@@ -983,10 +1172,75 @@ Every entry consists of `(Term, Index, Command)`. The leader guarantees that onc
                     id="fc_raft_3",
                     question="State the Leader Completeness property.",
                     answer="If a log entry is committed in a given term, then that entry will be present in the logs of the leaders for all higher-numbered terms.",
+                    front="State the Leader Completeness property.",
+                    back="If a log entry is committed in a given term, then that entry will be present in the logs of the leaders for all higher-numbered terms.",
                     explanation="Guaranteed by candidate voting rule: voters deny votes to candidates with less up-to-date logs.",
                     difficulty="hard",
                     review_status="new",
                     topic_tag="Safety Proofs"
+                ),
+                FlashcardItem(
+                    id="fc_raft_4",
+                    question="What is the formula for strict quorum in an N-node cluster?",
+                    answer="Quorum Q = floor(N / 2) + 1",
+                    front="What is the formula for strict quorum in an N-node cluster?",
+                    back="Quorum Q = floor(N / 2) + 1",
+                    explanation="Ensures any two quorums have at least one overlapping witness server.",
+                    difficulty="easy",
+                    review_status="mastered",
+                    topic_tag="Quorum Math"
+                )
+            ],
+            practice_questions=[
+                PracticeQuestionItem(
+                    id="pq_raft_1",
+                    question="What is the role of randomized election timeouts in Raft leader election?",
+                    question_type="short_answer",
+                    difficulty="easy",
+                    topic="Leader Election",
+                    model_answer="Randomized election timeouts (typically 150ms-300ms) stagger the moment when follower nodes initiate elections. This prevents multiple candidate nodes from splitting votes simultaneously into inconclusive cycles, ensuring that a single candidate times out first, gathers majority votes, and sends heartbeats.",
+                    rubric_explanation="Award full points for identifying split-vote avoidance, timeout staggering, and fast single-leader resolution.",
+                    source_reference="Master Notes Section 1: Cluster States & Leader Election Mechanics"
+                ),
+                PracticeQuestionItem(
+                    id="pq_raft_2",
+                    question="Explain the Log Matching Property inductively and detail the step-by-step mechanism of the AppendEntries consistency check when a follower log has uncommitted entries from an old term.",
+                    question_type="long_answer",
+                    difficulty="hard",
+                    topic="Log Replication",
+                    model_answer="The Log Matching Property states that: 1) If two entries in different logs have the same index and term, they store the same command. 2) If two entries have the same index and term, their logs are identical in all preceding entries.\n\nMechanism:\nStep 1: Leader includes (prevLogIndex, prevLogTerm) with new entries in AppendEntries.\nStep 2: Follower verifies its log slot at prevLogIndex. If no entry exists or the term does not match prevLogTerm, it rejects the RPC.\nStep 3: Upon rejection, leader decrements nextIndex[peer] and retries.\nStep 4: Once a matching point is found, the follower overwrites all conflicting subsequent entries with the leader's entries and appends any new ones.",
+                    rubric_explanation="Candidate must state both invariant conditions, the prevLogIndex/prevLogTerm handshake, the decrementing nextIndex retry loop, and the overwrite rule.",
+                    source_reference="Master Notes Section 2: Log Replication & The Log Matching Invariant"
+                ),
+                PracticeQuestionItem(
+                    id="pq_raft_3",
+                    question="Why can a Raft leader never commit an entry from a prior term directly by counting replicas, as illustrated by the Figure 8 counterexample?",
+                    question_type="conceptual",
+                    difficulty="hard",
+                    topic="Commit Invariant",
+                    model_answer="As proven in Figure 8 of the Raft paper, an entry from an older term can be replicated on a majority of nodes and still subsequently be overwritten if an older leader is partitioned, a new candidate is elected with a higher term, and rolls back the uncommitted majority. Raft eliminates this vulnerability by requiring that a leader only commit entries from its current term by majority count; older entries are committed indirectly once a current-term entry reaches majority.",
+                    rubric_explanation="Key points: older term replicas are vulnerable to higher-term rollbacks; leader must commit a current-term entry before prior entries are safely finalized.",
+                    source_reference="Master Notes Section 3: The Commit Condition & Current Term Constraint"
+                ),
+                PracticeQuestionItem(
+                    id="pq_raft_4",
+                    question="Consider a 5-node cluster {S1, S2, S3, S4, S5}. A network partition divides the cluster into Partition Alpha {S1, S2} and Partition Beta {S3, S4, S5}. If S1 was leader, what happens when clients submit writes to S1 versus S3? Explain state transitions upon partition healing.",
+                    question_type="application",
+                    difficulty="medium",
+                    topic="Network Partitions",
+                    model_answer="Writes to S1 (minority 2/5): S1 appends write to log but cannot achieve quorum (2 < 3). Writes remain uncommitted and client receives no commit ack.\nWrites to S3 (majority 3/5): Partition Beta nodes time out, elect S3 with term T+1 (3 votes). S3 accepts writes, replicates to S4 and S5 (3/5 quorum), and commits.\nHealing: When the partition heals, S1 sees S3's higher term T+1, reverts to Follower. S3's AppendEntries detects mismatched uncommitted entries on S1 and S2, forcing them to truncate their logs and replicate S3's committed log.",
+                    rubric_explanation="Full score requires explaining why S1 cannot commit, how S3 is elected, and the log truncation upon healing.",
+                    source_reference="Master Notes Important Example: Five-Node Partition Scenario"
+                ),
+                PracticeQuestionItem(
+                    id="pq_raft_5",
+                    question="Given cluster size N=7, compute the minimum quorum Q required for leader election and commitment. If 3 nodes fail simultaneously, can the cluster maintain state transitions? Show formula steps.",
+                    question_type="formula",
+                    difficulty="easy",
+                    topic="Quorum Calculations",
+                    model_answer="Formula: Q = floor(N / 2) + 1.\nFor N = 7: Q = floor(7 / 2) + 1 = 3 + 1 = 4 nodes.\nMaximum crash fault tolerance: F = floor((N - 1) / 2) = floor(6 / 2) = 3 nodes.\nIf 3 nodes fail simultaneously, 7 - 3 = 4 functional nodes remain. Since 4 >= Q (4 >= 4), the cluster maintains majority quorum and can continue safely executing state transitions and committing client writes.",
+                    rubric_explanation="Must show Q = 4 calculation, F = 3 fault tolerance bound, and demonstrate that 4 remaining nodes satisfy the quorum threshold.",
+                    source_reference="Master Notes Section 1 & Important Formulas"
                 )
             ],
             revision_sheet=ExamRevisionSheet(
@@ -1007,6 +1261,11 @@ Every entry consists of `(Term, Index, Command)`. The leader guarantees that onc
                         latex_or_text="F \\le \\lfloor (N-1)/2 \\rfloor",
                         explanation="Maximum number of node crashes tolerated by an N-node system.",
                         variables={"N": "Node count", "F": "Tolerable failures"}
+                    ),
+                    EquationItem(
+                        latex_or_text="\\mathcal{Q} = \\lfloor N/2 \\rfloor + 1",
+                        explanation="Strict majority quorum threshold.",
+                        variables={"N": "Total nodes", "Q": "Quorum size"}
                     )
                 ],
                 high_probability_questions=[
@@ -1019,6 +1278,123 @@ Every entry consists of `(Term, Index, Command)`. The leader guarantees that onc
                     "Dr. Thorne always tests the boundary condition: what happens if election timeout equals heartbeat interval? Answer: Continuous spurious elections!",
                     "Always explicitly write out the quorum calculation step in midterms."
                 ]
+            ),
+            one_page_summary="""# Raft Consensus Protocol — One-Page Exam Revision Sheet
+**Course:** CS-244 Distributed Systems | **Instructor:** Dr. Aris Thorne | **Target Sections:** A, C
+
+---
+
+### 1. Essential Axioms & Quorum Bounds
+- **Cluster Sizing:** $N \\ge 2F + 1$ tolerates up to $F$ fail-stop crashes.
+- **Strict Majority Quorum:** $\\mathcal{Q} = \\lfloor N/2 \\rfloor + 1$. Any two quorums must intersect ($|Q_1 \\cap Q_2| \\ge 1$).
+- **Randomized Timeout:** $T_{\\text{election}} \\sim \\mathcal{U}(150\\text{ms}, 300\\text{ms})$ prevents split-vote cycles.
+
+### 2. Core Invariants (Exam High-Yield)
+| Invariant | Guarantee | Enforcement Mechanism |
+|---|---|---|
+| **Election Safety** | At most one leader elected per term | Strict majority voting quorum |
+| **Leader Append-Only** | Leader never overwrites or truncates its log | Leader only appends client writes |
+| **Log Matching** | Matching `(index, term)` implies identical prior log | `AppendEntries(prevLogIndex, prevLogTerm)` check |
+| **Leader Completeness** | Committed entries exist in future leaders | Voters deny votes to less up-to-date candidates |
+| **State Machine Safety** | Commits apply monotonically across all peers | Indirect commit rule for prior terms (Figure 8) |
+
+### 3. Critical Exam Trap: Figure 8 Rule
+> **Dr. Thorne Warning:** Never count replicas to directly commit older term log entries. An entry from term $T < T_{\\text{current}}$ is committed **only** after an entry from the current term $T_{\\text{current}}$ has been replicated on a strict majority!
+""",
+            detailed_summary="""# Raft Consensus Protocol — Comprehensive Study & Revision Guide
+## Theoretical Foundations, State Transitions, and Derivations
+
+### Chapter Summary
+Raft decomposes distributed consensus into three modular subproblems: Leader Election, Log Replication, and Safety Invariants. By enforcing strong leadership and randomized timers, Raft guarantees sequential consistency equivalent to Paxos with superior operational inspectability.
+
+### Mathematical Derivations & Mechanisms
+1. **Quorum Intersection Principle:** Let the cluster size be $N$. If two quorums $Q_1$ and $Q_2$ each contain at least $\\lfloor N/2 \\rfloor + 1$ members, then:
+$$|Q_1| + |Q_2| = 2\\left(\\lfloor N/2 \\rfloor + 1\\right) > N \\implies |Q_1 \\cap Q_2| \\ge 1$$
+Thus, any leader election quorum $Q_E$ overlaps with every log replication quorum $Q_R$ by at least one witness node that observed the latest committed log entry.
+
+2. **Log Backtracking Protocol:**
+When a follower detects a mismatch at `(prevLogIndex, prevLogTerm)`, it returns failure. The leader decrements `nextIndex[peer]` by 1 (or jumps to the start of the conflicting term in Section C's fast-rollback optimization) until convergence is reached.
+
+### Multi-Section Consensus Synthesis
+- **Section A Focus:** Formal mathematical invariant proofs and boundary limits ($T_{\\text{heartbeat}} \\ll T_{\\text{election}}$).
+- **Section C Focus:** Concrete cluster partition scenarios, split-brain mitigation, and log truncation recovery traces.
+""",
+            last_minute_summary="""# Raft Protocol — Last-Minute Exam Cram Checklist
+**Read 15 minutes before the exam!**
+
+✓ **Formula:** Strict Majority $Q = \\lfloor N/2 \\rfloor + 1$. For $N=5$, $Q=3$. For $N=7$, $Q=4$. For $N=9$, $Q=5$.
+✓ **Fault Tolerance:** Max crash faults $F = \\lfloor (N-1)/2 \\rfloor$. A 5-node cluster tolerates 2 faults.
+✓ **Figure 8 Rule:** YOU CANNOT COMMIT OLD ENTRIES DIRECTLY BY COUNTING COPIES. Must replicate a current-term entry first.
+✓ **Timer Rule:** $T_{\\text{broadcast}} \\ll T_{\\text{election}} \\ll \\text{MTBF}$. If $T_{\\text{election}} \\le T_{\\text{heartbeat}}$, infinite spurious elections occur.
+✓ **Voter Rule:** Deny vote if voter's log has higher term, or same term and greater log length.
+✓ **Partition Behavior:** Minority partition ($<Q$) accepts writes but never commits; majority partition elects leader and commits; upon reconnection, minority log truncates.
+""",
+            exam_priority_analysis=ExamPriorityAnalysis(
+                lecture_emphasis_topics=[
+                    ExamPriorityTopic(
+                        topic="Figure 8 Older Term Commit Invariant",
+                        priority_level="Critical",
+                        category="lecture_emphasis",
+                        source_evidence="Dr. Thorne Section A board warning: 'Guaranteed exam question. Never commit prior term entries directly!'",
+                        frequency_score=98,
+                        is_lecturer_stated=True,
+                        reasoning="Highlighted verbatim by Dr. Thorne in Section A as a required derivation step on university exams."
+                    ),
+                    ExamPriorityTopic(
+                        topic="Strict Majority Quorum Bound (N >= 2F + 1)",
+                        priority_level="Critical",
+                        category="lecture_emphasis",
+                        source_evidence="Classroom Whiteboard Quad 1 & Syllabus Theorem 4.1",
+                        frequency_score=95,
+                        is_lecturer_stated=True,
+                        reasoning="Foundational mathematical constraint for any consensus state machine."
+                    )
+                ],
+                cross_section_recurring_topics=[
+                    ExamPriorityTopic(
+                        topic="Log Matching Induction & Overwrite Rules",
+                        priority_level="High",
+                        category="cross_section_recurring",
+                        source_evidence="Covered theoretically in Section A; demonstrated with fast rollback trace in Section C",
+                        frequency_score=90,
+                        is_lecturer_stated=False,
+                        reasoning="Cross-section comparison indicates multi-professor focus on log divergence recovery."
+                    ),
+                    ExamPriorityTopic(
+                        topic="Randomized Timeout Interval Bounds (150ms-300ms)",
+                        priority_level="High",
+                        category="cross_section_recurring",
+                        source_evidence="Both Section A syllabus and Section C lab review",
+                        frequency_score=86,
+                        is_lecturer_stated=False,
+                        reasoning="Common numerical problem regarding heartbeat vs election timeout sizing."
+                    )
+                ],
+                critical_formulas=[
+                    {
+                        "formula": "\\mathcal{Q} = \\lfloor N/2 \\rfloor + 1",
+                        "weight": "100% Exam Frequency",
+                        "description": "Strict majority quorum threshold for all Raft state commitments."
+                    },
+                    {
+                        "formula": "F \\le \\lfloor (N-1)/2 \\rfloor",
+                        "weight": "High Weight",
+                        "description": "Maximum concurrent node crashes tolerated without halting consensus."
+                    }
+                ],
+                professor_reference_concepts=[
+                    {
+                        "concept": "Leader Completeness Safety Proof",
+                        "reference": "Ongaro & Ousterhout (2014) Raft Paper Section 5.4.1",
+                        "importance": "High Theoretical Weight"
+                    },
+                    {
+                        "concept": "State Machine Safety Monotonicity",
+                        "reference": "Course Syllabus Section 4.2",
+                        "importance": "Core Exam Topic"
+                    }
+                ],
+                disclaimer="Exam Priority Analysis reflects lecture coverage and syllabus weighting, not exact future examination questions."
             )
         )
         self.save_study_kit(raft_study_kit)
@@ -1183,6 +1559,11 @@ By projecting with $W_i^Q, W_i^K, W_i^V$, each attention head operates in a dist
         attn_study_kit = StudyKit(
             id="skit_attn_02",
             lecture_id=lec2_id,
+            master_notes_id=lec2_id,
+            user_id="usr_lectra_default",
+            subject_code="CS-224N",
+            professor="Prof. Elena Vance",
+            kit_type="comprehensive",
             title="Transformer Attention Complete Study Kit",
             subject_name="Deep Neural Architectures & Attention",
             chapter="Chapter 3: The Transformer Architecture",
@@ -1204,7 +1585,8 @@ By projecting with $W_i^Q, W_i^K, W_i^V$, each attention head operates in a dist
                     correct_option_index=1,
                     explanation="For large d_k, dot products grow substantially, driving softmax into regions with near-zero gradients where backpropagation fails.",
                     difficulty="medium",
-                    topic_reference="Softmax Numerical Stability"
+                    topic_reference="Softmax Numerical Stability",
+                    source_reference="Master Notes Section 1: Scaled Dot-Product Attention Formulation"
                 ),
                 MCQQuestion(
                     id="mcq_attn_2",
@@ -1213,7 +1595,23 @@ By projecting with $W_i^Q, W_i^K, W_i^V$, each attention head operates in a dist
                     correct_option_index=1,
                     explanation="Multiplying Q (n x d) by K^T (d x n) costs O(n^2 * d), and multiplying the resulting (n x n) matrix by V (n x d) costs O(n^2 * d).",
                     difficulty="medium",
-                    topic_reference="Computational Complexity"
+                    topic_reference="Computational Complexity",
+                    source_reference="Master Notes Important Example: Complexity Comparison"
+                ),
+                MCQQuestion(
+                    id="mcq_attn_3",
+                    question="Why does multi-head attention project queries, keys, and values h times with learned parameter matrices instead of performing a single attention function?",
+                    options=[
+                        "To reduce the number of floating-point operations by h-fold",
+                        "To allow the model to jointly attend to information from different representation subspaces at different positions",
+                        "To replace layer normalization and avoid residual connections",
+                        "To ensure positional encodings are strictly orthogonal"
+                    ],
+                    correct_option_index=1,
+                    explanation="Multi-head attention projects inputs into h distinct lower-dimensional subspaces (d_k = d_model / h), enabling simultaneous focus on diverse contextual features.",
+                    difficulty="hard",
+                    topic_reference="Multi-Head Representation Subspaces",
+                    source_reference="Master Notes Section 2: Multi-Head Projection and Subspace Diversity"
                 )
             ],
             flashcards=[
@@ -1221,6 +1619,8 @@ By projecting with $W_i^Q, W_i^K, W_i^V$, each attention head operates in a dist
                     id="fc_attn_1",
                     question="Why does standard attention scale by 1/sqrt(d_k)?",
                     answer="To counteract the fact that the dot product of two d_k-dimensional vectors with unit variance has variance d_k, which would saturate the softmax function.",
+                    front="Why does standard attention scale by 1/sqrt(d_k)?",
+                    back="To counteract the fact that the dot product of two d_k-dimensional vectors with unit variance has variance d_k, which would saturate the softmax function.",
                     explanation="Preserves variance at 1.",
                     difficulty="medium",
                     review_status="mastered",
@@ -1230,10 +1630,65 @@ By projecting with $W_i^Q, W_i^K, W_i^V$, each attention head operates in a dist
                     id="fc_attn_2",
                     question="What is the sequential operational path length between two distant tokens in a Self-Attention layer?",
                     answer="O(1)",
+                    front="What is the sequential operational path length between two distant tokens in a Self-Attention layer?",
+                    back="O(1)",
                     explanation="Every token attends directly to all other tokens in a single matrix operation, unlike RNNs which require O(n) sequential steps.",
                     difficulty="easy",
                     review_status="needs_review",
                     topic_tag="Architecture"
+                ),
+                FlashcardItem(
+                    id="fc_attn_3",
+                    question="What are the dimensions of W_Q, W_K, W_V in a single head i?",
+                    answer="Each projection matrix has shape [d_model, d_k], where d_k = d_model / h.",
+                    front="What are the dimensions of W_Q, W_K, W_V in a single head i?",
+                    back="Each projection matrix has shape [d_model, d_k], where d_k = d_model / h.",
+                    explanation="Tensor shapes highlighted by Prof. Vance in Section B board layout.",
+                    difficulty="hard",
+                    review_status="new",
+                    topic_tag="Tensor Shapes"
+                )
+            ],
+            practice_questions=[
+                PracticeQuestionItem(
+                    id="pq_attn_1",
+                    question="Why is scaled dot-product attention scaled by 1/sqrt(d_k)?",
+                    question_type="short_answer",
+                    difficulty="easy",
+                    topic="Attention Mechanics",
+                    model_answer="Assuming components of q and k are independent random variables with mean 0 and variance 1, their dot product has mean 0 and variance d_k. For large d_k, dot products grow large, pushing the softmax function into regions with extremely small gradients. Dividing by sqrt(d_k) scales the variance back to 1, maintaining healthy gradient propagation during training.",
+                    rubric_explanation="Award full credit for statistical derivation: sum of d_k independent products has variance d_k, causing softmax saturation and vanishing gradients.",
+                    source_reference="Master Notes Section 1: Scaled Dot-Product Attention Formulation"
+                ),
+                PracticeQuestionItem(
+                    id="pq_attn_2",
+                    question="Derive the complete tensor computation flow for Multi-Head Attention given input matrix X of dimension [B, S, D]. Detail projections, attention computation, concatenation, and final output.",
+                    question_type="long_answer",
+                    difficulty="hard",
+                    topic="Tensor Flow",
+                    model_answer="Given input X in R^{B x S x D}:\n1. Compute linear projections for each head i (1..h): Q_i = X W_i^Q, K_i = X W_i^K, V_i = X W_i^V, where W in R^{D x d_k}.\n2. For each head, compute head_i = softmax(Q_i K_i^T / sqrt(d_k)) V_i, yielding [B, S, d_v].\n3. Concatenate all h heads along the channel dimension: Concat(head_1, ..., head_h) in R^{B x S x (h * d_v)} = R^{B x S x D}.\n4. Apply linear projection matrix W^O in R^{D x D}: MultiHead(Q, K, V) = Concat * W^O.",
+                    rubric_explanation="Require explicit matrix formulas for Q, K, V projections, scaled softmax multiplication by V, concatenation, and final W^O projection with matching tensor dimensions.",
+                    source_reference="Master Notes Section 2 & Smart Diagram 2"
+                ),
+                PracticeQuestionItem(
+                    id="pq_attn_3",
+                    question="Compare the maximum path length and computational complexity per layer between Self-Attention, Recurrent (RNN), and Convolutional (CNN) layers.",
+                    question_type="conceptual",
+                    difficulty="medium",
+                    topic="Architecture Comparison",
+                    model_answer="Maximum Path Length:\n- Self-Attention: O(1) direct connection between any two positions.\n- Recurrent: O(n) sequential signal traversal.\n- Convolutional (kernel size k): O(log_k(n)) with dilated convolutions.\n\nComputational Complexity per layer:\n- Self-Attention: O(n^2 * d).\n- Recurrent: O(n * d^2).\n- Convolutional: O(k * n * d^2).\n\nWhen sequence length n is smaller than representation dimension d, self-attention is computationally faster and parallelizable.",
+                    rubric_explanation="Full score requires table/breakdown comparing path lengths O(1) vs O(n) and complexity O(n^2 d) vs O(n d^2).",
+                    source_reference="Master Notes Important Example & Vaswani et al. Table 1"
+                ),
+                PracticeQuestionItem(
+                    id="pq_attn_4",
+                    question="A transformer model has d_model = 512 and h = 8 heads. Calculate d_k and d_v. What are the dimensions of W_i^Q and the final output projection W^O?",
+                    question_type="formula",
+                    difficulty="easy",
+                    topic="Parameter Sizing",
+                    model_answer="d_k = d_v = d_model / h = 512 / 8 = 64.\nDimension of each projection matrix W_i^Q: [d_model, d_k] = [512, 64].\nDimension of final output matrix W^O: [h * d_v, d_model] = [8 * 64, 512] = [512, 512].",
+                    rubric_explanation="Must show d_k = 64 calculation and precise dimensions [512, 64] and [512, 512].",
+                    source_reference="Master Notes Section 2: Multi-Head Projection and Subspace Diversity"
                 )
             ],
             revision_sheet=ExamRevisionSheet(
@@ -1242,17 +1697,127 @@ By projecting with $W_i^Q, W_i^K, W_i^V$, each attention head operates in a dist
                         term="Residual Connection",
                         definition="Adding the input of a sub-layer directly to its output: x + Sublayer(x).",
                         context="Allows gradients to bypass non-linearities directly."
+                    ),
+                    DefinitionItem(
+                        term="Self-Attention",
+                        definition="Attention mechanism relating different positions of a single sequence in order to compute a representation of the sequence.",
+                        context="Core building block of Transformer encoders and decoders."
                     )
                 ],
                 critical_formulas=[
+                    EquationItem(
+                        latex_or_text="\\text{Attention}(Q, K, V) = \\text{softmax}\\left(\\frac{QK^T}{\\sqrt{d_k}}\\right)V",
+                        explanation="Scaled dot-product attention equation.",
+                        variables={"Q": "Queries", "K": "Keys", "V": "Values", "d_k": "Key dimension"}
+                    ),
                     EquationItem(
                         latex_or_text="\\text{Complexity} = \\mathcal{O}(n^2 d)",
                         explanation="Attention computational complexity per layer.",
                         variables={"n": "Tokens", "d": "Hidden dimension"}
                     )
                 ],
-                high_probability_questions=[],
+                high_probability_questions=[
+                    {
+                        "question": "Why does attention require positional encodings?",
+                        "answer": "Since self-attention contains no recurrence and no convolution, it is permutation-equivariant. Positional encodings inject token order into the input embeddings."
+                    }
+                ],
                 professor_tips=["Prof. Vance always asks students to draw the tensor shapes at every step from Input to W_O."]
+            ),
+            one_page_summary="""# Multi-Head Attention — One-Page Exam Revision Sheet
+**Course:** CS-224N Attention & Transformers | **Instructor:** Prof. Elena Vance | **Sections:** B, D
+
+---
+
+### 1. The Attention Equation
+$$\\text{Attention}(Q, K, V) = \\text{softmax}\\left(\\frac{QK^T}{\\sqrt{d_k}}\\right)V$$
+- **Variance Scaling:** $\\text{Var}(q_i k_i) = d_k$. Dividing by $\\sqrt{d_k}$ resets variance to 1, preventing vanishing gradients in softmax.
+- **Complexity:** $\\mathcal{O}(n^2 d)$ time, $\\mathcal{O}(n^2)$ attention map memory.
+
+### 2. Multi-Head Mechanism
+$$\\text{MultiHead}(Q, K, V) = \\text{Concat}(\\text{head}_1, \\dots, \\text{head}_h)W^O$$
+$$\\text{where } \\text{head}_i = \\text{Attention}(Q W_i^Q, K W_i^K, V W_i^V)$$
+- $d_k = d_v = d_{\\text{model}} / h$.
+- Enables simultaneous focus on syntax, semantic role, and long-range coreference.
+
+### 3. Exam Formula Checklist
+- $W_i^Q \\in \\mathbb{R}^{d_{\\text{model}} \\times d_k}$
+- $W^O \\in \\mathbb{R}^{h d_v \\times d_{\\text{model}}}$
+- Sequential path length: $\\mathcal{O}(1)$
+""",
+            detailed_summary="""# Multi-Head Attention & Transformer Foundations — Detailed Revision Guide
+## Mathematical Derivations & Tensor Architectures
+
+### 1. Mathematical Justification for 1/sqrt(d_k)
+Let $q, k \\in \\mathbb{R}^{d_k}$ with components $q_i, k_i$ independent random variables with mean 0 and variance 1:
+$$\\mathbb{E}[q \\cdot k] = \\sum_{i=1}^{d_k} \\mathbb{E}[q_i k_i] = 0$$
+$$\\text{Var}(q \\cdot k) = \\sum_{i=1}^{d_k} \\text{Var}(q_i k_i) = \\sum_{i=1}^{d_k} \\text{Var}(q_i)\\text{Var}(k_i) = d_k$$
+Standard deviation is $\\sqrt{d_k}$. Dividing by $\\sqrt{d_k}$ yields unit variance, keeping softmax inputs in sensitive gradient regions.
+
+### 2. Cross-Section Synthesis
+- **Section B Emphasis:** Geometric interpretation of attention maps, dot-product projections, and tensor shapes.
+- **Section D Emphasis:** Computational bottlenecks, quadratic memory cost $\\mathcal{O}(n^2)$, and FlashAttention tiling optimizations.
+""",
+            last_minute_summary="""# Transformer Attention — Last-Minute Exam Cram
+✓ **Formula:** $\\text{softmax}(QK^T / \\sqrt{d_k}) V$.
+✓ **Why $\\sqrt{d_k}$?** Without it, large $d_k$ causes softmax saturation and vanishing gradients during backward pass!
+✓ **Path Length:** $\\mathcal{O}(1)$ for self-attention vs $\\mathcal{O}(n)$ for RNN.
+✓ **Complexity:** Self-attention is $\\mathcal{O}(n^2 d)$ vs RNN $\\mathcal{O}(n d^2)$.
+✓ **Multi-head sizing:** $d_k = d_{\\text{model}} / h$. For $512$ dims with $8$ heads, $d_k = 64$.
+✓ **Positional encoding necessity:** Self-attention is permutation-equivariant; order information must be explicitly added to token embeddings.
+""",
+            exam_priority_analysis=ExamPriorityAnalysis(
+                lecture_emphasis_topics=[
+                    ExamPriorityTopic(
+                        topic="Variance Scaling Proof for 1/sqrt(d_k)",
+                        priority_level="Critical",
+                        category="lecture_emphasis",
+                        source_evidence="Prof. Vance blackboard bold derivation, Section B",
+                        frequency_score=97,
+                        is_lecturer_stated=True,
+                        reasoning="Appeared on every previous midterm exam; mandatory statistical variance derivation."
+                    ),
+                    ExamPriorityTopic(
+                        topic="Tensor Shape Progression [B, S, H, D/H]",
+                        priority_level="High",
+                        category="lecture_emphasis",
+                        source_evidence="Section B lecture notes & slide annotations",
+                        frequency_score=92,
+                        is_lecturer_stated=True,
+                        reasoning="Prof. Vance requires complete tensor shape dimensions on all matrix multiplication questions."
+                    )
+                ],
+                cross_section_recurring_topics=[
+                    ExamPriorityTopic(
+                        topic="Self-Attention vs RNN Computational Complexity",
+                        priority_level="High",
+                        category="cross_section_recurring",
+                        source_evidence="Section B and Section D shared syllabus",
+                        frequency_score=88,
+                        is_lecturer_stated=False,
+                        reasoning="Standard comparison problem comparing O(n^2 d) vs O(n d^2)."
+                    )
+                ],
+                critical_formulas=[
+                    {
+                        "formula": "\\text{softmax}(QK^T / \\sqrt{d_k})V",
+                        "weight": "100% Exam Frequency",
+                        "description": "Scaled dot-product attention."
+                    },
+                    {
+                        "formula": "d_k = d_{\\text{model}} / h",
+                        "weight": "High Weight",
+                        "description": "Subspace projection dimension."
+                    }
+                ],
+                professor_reference_concepts=[
+                    {
+                        "concept": "Multi-Head Subspace Diversity",
+                        "reference": "Vaswani et al. (2017) Section 3.2.2",
+                        "importance": "High Theoretical Weight"
+                    }
+                ],
+                disclaimer="Exam Priority Analysis reflects lecture coverage and syllabus weighting, not exact future examination questions."
             )
         )
         self.save_study_kit(attn_study_kit)
@@ -2291,12 +2856,9 @@ By projecting with $W_i^Q, W_i^K, W_i^V$, each attention head operates in a dist
             if not r:
                 return None
         ws = self._row_to_workspace(r)
-        if (
-            requesting_user_id
-            and ws.user_id != requesting_user_id
-            and ws.visibility == VisibilityType.PRIVATE
-        ):
-            raise PermissionError("RLS Policy Violation: Cannot access another user's private workspace.")
+        if ws.visibility == VisibilityType.PRIVATE:
+            if not requesting_user_id or ws.user_id != requesting_user_id:
+                raise PermissionError("RLS Policy Violation: Cannot access another user's private workspace.")
         return ws
 
     def delete_workspace(self, ws_id: str, requesting_user_id: str) -> bool:
@@ -2596,7 +3158,7 @@ By projecting with $W_i^Q, W_i^K, W_i^V$, each attention head operates in a dist
         if not r:
             return None
         note = self._row_to_master_note(r)
-        if requesting_user_id and note.user_id != requesting_user_id:
+        if not requesting_user_id or note.user_id != requesting_user_id:
             # Check if shared in community_contributions or non-private visibility
             cursor.execute(
                 "SELECT COUNT(*) FROM community_contributions WHERE (master_notes_id = ? OR master_notes_id = ?) AND visibility IN ('section', 'public')",
@@ -2722,20 +3284,32 @@ By projecting with $W_i^Q, W_i^K, W_i^V$, each attention head operates in a dist
             self._conn.execute(
                 """
                 INSERT OR REPLACE INTO lectra_study_kits
-                (id, lecture_id, title, subject_name, chapter, key_takeaways_json, mcqs_json, flashcards_json, revision_sheet_json, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (id, lecture_id, user_id, professor, subject_code, kit_type, title, subject_name, chapter,
+                 key_takeaways_json, mcqs_json, flashcards_json, practice_questions_json, revision_sheet_json,
+                 one_page_summary, detailed_summary, last_minute_summary, exam_priority_json, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     skit.id,
                     skit.lecture_id,
+                    skit.user_id or "usr_lectra_default",
+                    skit.professor or "",
+                    skit.subject_code or "",
+                    skit.kit_type or "comprehensive",
                     skit.title,
                     skit.subject_name,
                     skit.chapter,
                     json.dumps(skit.key_takeaways),
                     json.dumps([m.model_dump() for m in skit.mcqs]),
                     json.dumps([f.model_dump() for f in skit.flashcards]),
+                    json.dumps([p.model_dump() for p in skit.practice_questions]),
                     json.dumps(skit.revision_sheet.model_dump()),
+                    skit.one_page_summary or "",
+                    skit.detailed_summary or "",
+                    skit.last_minute_summary or "",
+                    json.dumps(skit.exam_priority_analysis.model_dump() if skit.exam_priority_analysis else {}),
                     skit.created_at,
+                    skit.updated_at or utc_now(),
                 ),
             )
             self._conn.execute(
@@ -2747,7 +3321,7 @@ By projecting with $W_i^Q, W_i^K, W_i^V$, each attention head operates in a dist
                 (
                     skit.id,
                     mn_id,
-                    skit.kit_type or "complete",
+                    skit.kit_type or "comprehensive",
                     json.dumps(skit.model_dump(mode="json")),
                     skit.created_at,
                 ),
@@ -2796,6 +3370,77 @@ By projecting with $W_i^Q, W_i^K, W_i^V$, each attention head operates in a dist
                         skit.created_at,
                     ),
                 )
+            self._ensure_initial_progress(skit)
+        return skit
+
+    def _ensure_initial_progress(self, skit: StudyKit) -> None:
+        user_id = skit.user_id or "usr_lectra_default"
+        cursor = self._conn.cursor()
+        cursor.execute(
+            "SELECT id FROM lectra_student_kit_progress WHERE user_id = ? AND kit_id = ?",
+            (user_id, skit.id),
+        )
+        if not cursor.fetchone():
+            mastered = sum(1 for f in skit.flashcards if f.review_status == "mastered")
+            needs_rev = sum(1 for f in skit.flashcards if f.review_status == "needs_review")
+            total = len(skit.flashcards)
+            status_map = {f.id: f.review_status for f in skit.flashcards}
+            pct = round((mastered / max(total, 1)) * 100, 1)
+            self._conn.execute(
+                """
+                INSERT INTO lectra_student_kit_progress
+                (id, user_id, kit_id, cards_mastered, cards_needs_review, total_cards, flashcards_progress_json,
+                 quizzes_taken, best_quiz_score, last_quiz_score, last_practiced_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    f"prog_{uuid4().hex[:10]}",
+                    user_id,
+                    skit.id,
+                    mastered,
+                    needs_rev,
+                    total,
+                    json.dumps(status_map),
+                    0,
+                    None,
+                    None,
+                    utc_now(),
+                ),
+            )
+
+    def _row_to_study_kit(self, r: sqlite3.Row) -> StudyKit:
+        keys = r.keys()
+        exam_p_raw = json.loads(r["exam_priority_json"]) if "exam_priority_json" in keys and r["exam_priority_json"] else None
+        exam_p = ExamPriorityAnalysis(**exam_p_raw) if exam_p_raw else None
+        practice_qs = (
+            [PracticeQuestionItem(**pq) for pq in json.loads(r["practice_questions_json"])]
+            if "practice_questions_json" in keys and r["practice_questions_json"]
+            else []
+        )
+        skit = StudyKit(
+            id=r["id"],
+            master_notes_id=r["lecture_id"],
+            lecture_id=r["lecture_id"],
+            user_id=r["user_id"] if "user_id" in keys and r["user_id"] else "usr_lectra_default",
+            professor=r["professor"] if "professor" in keys and r["professor"] else "",
+            subject_code=r["subject_code"] if "subject_code" in keys and r["subject_code"] else "",
+            kit_type=r["kit_type"] if "kit_type" in keys and r["kit_type"] else "comprehensive",
+            title=r["title"],
+            subject_name=r["subject_name"],
+            chapter=r["chapter"],
+            key_takeaways=json.loads(r["key_takeaways_json"]) if r["key_takeaways_json"] else [],
+            mcqs=[MCQQuestion(**m) for m in json.loads(r["mcqs_json"])],
+            flashcards=[FlashcardItem(**f) for f in json.loads(r["flashcards_json"])],
+            practice_questions=practice_qs,
+            revision_sheet=ExamRevisionSheet(**json.loads(r["revision_sheet_json"])),
+            one_page_summary=r["one_page_summary"] if "one_page_summary" in keys and r["one_page_summary"] else "",
+            detailed_summary=r["detailed_summary"] if "detailed_summary" in keys and r["detailed_summary"] else "",
+            last_minute_summary=r["last_minute_summary"] if "last_minute_summary" in keys and r["last_minute_summary"] else "",
+            exam_priority_analysis=exam_p,
+            created_at=r["created_at"],
+            updated_at=r["updated_at"] if "updated_at" in keys and r["updated_at"] else r["created_at"],
+        )
+        skit.progress = self.get_student_kit_progress(skit.id, skit.user_id)
         return skit
 
     def get_study_kit(self, lecture_id: str) -> Optional[StudyKit]:
@@ -2804,42 +3449,280 @@ By projecting with $W_i^Q, W_i^K, W_i^V$, each attention head operates in a dist
         r = cursor.fetchone()
         if not r:
             return None
-        return StudyKit(
-            id=r["id"],
-            master_notes_id=r["lecture_id"],
-            lecture_id=r["lecture_id"],
-            title=r["title"],
-            subject_name=r["subject_name"],
-            chapter=r["chapter"],
-            key_takeaways=json.loads(r["key_takeaways_json"]),
-            mcqs=[MCQQuestion(**m) for m in json.loads(r["mcqs_json"])],
-            flashcards=[FlashcardItem(**f) for f in json.loads(r["flashcards_json"])],
-            revision_sheet=ExamRevisionSheet(**json.loads(r["revision_sheet_json"])),
-            created_at=r["created_at"],
-        )
+        return self._row_to_study_kit(r)
 
-    def list_study_kits(self) -> List[StudyKit]:
+    def list_study_kits(
+        self,
+        user_id: Optional[str] = None,
+        subject: Optional[str] = None,
+        kit_type: Optional[str] = None,
+    ) -> List[StudyKit]:
         cursor = self._conn.cursor()
-        cursor.execute("SELECT * FROM lectra_study_kits ORDER BY created_at DESC")
+        query = "SELECT * FROM lectra_study_kits WHERE 1=1"
+        params: List[Any] = []
+        if subject:
+            query += " AND (subject_name LIKE ? OR subject_code LIKE ?)"
+            params.extend([f"%{subject}%", f"%{subject}%"])
+        if kit_type and kit_type != "all":
+            query += " AND kit_type = ?"
+            params.append(kit_type)
+        query += " ORDER BY created_at DESC"
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+        result = []
+        for r in rows:
+            kit = self._row_to_study_kit(r)
+            result.append(kit)
+        return result
+
+    def delete_study_kit(self, kit_id: str, user_id: Optional[str] = None) -> bool:
+        cursor = self._conn.cursor()
+        cursor.execute("SELECT id, user_id FROM lectra_study_kits WHERE id = ? OR lecture_id = ?", (kit_id, kit_id))
+        row = cursor.fetchone()
+        if not row:
+            return False
+        real_id = row["id"]
+        keys = row.keys()
+        owner_id = row["user_id"] if "user_id" in keys else "usr_lectra_default"
+        if user_id and user_id not in (owner_id, "usr_lectra_default", "admin"):
+            raise PermissionError("Access restricted: You cannot delete a study kit owned by another student.")
+        with self._conn:
+            self._conn.execute("DELETE FROM lectra_study_kits WHERE id = ?", (real_id,))
+            self._conn.execute("DELETE FROM study_kits WHERE id = ?", (real_id,))
+            self._conn.execute("DELETE FROM flashcards WHERE study_kit_id = ?", (real_id,))
+            self._conn.execute("DELETE FROM quiz_questions WHERE study_kit_id = ?", (real_id,))
+            self._conn.execute("DELETE FROM lectra_quiz_attempts WHERE study_kit_id = ?", (real_id,))
+            self._conn.execute("DELETE FROM lectra_student_kit_progress WHERE kit_id = ?", (real_id,))
+        return True
+
+    def save_quiz_attempt(self, attempt: QuizAttempt) -> QuizAttempt:
+        with self._conn:
+            self._conn.execute(
+                """
+                INSERT OR REPLACE INTO lectra_quiz_attempts
+                (id, study_kit_id, lecture_id, user_id, score, total, percentage, passed,
+                 time_taken_seconds, answers_json, topic_performance_json, breakdown_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    attempt.id,
+                    attempt.study_kit_id,
+                    attempt.lecture_id,
+                    attempt.user_id,
+                    attempt.score,
+                    attempt.total,
+                    attempt.percentage,
+                    1 if attempt.passed else 0,
+                    attempt.time_taken_seconds,
+                    json.dumps(attempt.answers),
+                    json.dumps(attempt.topic_performance),
+                    json.dumps(attempt.detailed_breakdown),
+                    attempt.created_at,
+                ),
+            )
+            # Update progress table
+            cursor = self._conn.cursor()
+            cursor.execute(
+                "SELECT * FROM lectra_student_kit_progress WHERE user_id = ? AND kit_id = ?",
+                (attempt.user_id, attempt.study_kit_id),
+            )
+            prog = cursor.fetchone()
+            if prog:
+                cur_quizzes = prog["quizzes_taken"] + 1
+                cur_best = max(prog["best_quiz_score"] or 0.0, attempt.percentage)
+                self._conn.execute(
+                    """
+                    UPDATE lectra_student_kit_progress
+                    SET quizzes_taken = ?, best_quiz_score = ?, last_quiz_score = ?, last_practiced_at = ?
+                    WHERE user_id = ? AND kit_id = ?
+                    """,
+                    (cur_quizzes, cur_best, attempt.percentage, utc_now(), attempt.user_id, attempt.study_kit_id),
+                )
+            else:
+                self._conn.execute(
+                    """
+                    INSERT INTO lectra_student_kit_progress
+                    (id, user_id, kit_id, cards_mastered, cards_needs_review, total_cards, flashcards_progress_json,
+                     quizzes_taken, best_quiz_score, last_quiz_score, last_practiced_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        f"prog_{uuid4().hex[:10]}",
+                        attempt.user_id,
+                        attempt.study_kit_id,
+                        0,
+                        0,
+                        0,
+                        "{}",
+                        1,
+                        attempt.percentage,
+                        attempt.percentage,
+                        utc_now(),
+                    ),
+                )
+        return attempt
+
+    def list_quiz_attempts(
+        self,
+        kit_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ) -> List[QuizAttempt]:
+        cursor = self._conn.cursor()
+        query = "SELECT * FROM lectra_quiz_attempts WHERE 1=1"
+        params: List[Any] = []
+        if kit_id:
+            query += " AND (study_kit_id = ? OR lecture_id = ?)"
+            params.extend([kit_id, kit_id])
+        if user_id:
+            query += " AND user_id = ?"
+            params.append(user_id)
+        query += " ORDER BY created_at DESC"
+        cursor.execute(query, params)
         rows = cursor.fetchall()
         result = []
         for r in rows:
             result.append(
-                StudyKit(
+                QuizAttempt(
                     id=r["id"],
-                    master_notes_id=r["lecture_id"],
+                    study_kit_id=r["study_kit_id"],
                     lecture_id=r["lecture_id"],
-                    title=r["title"],
-                    subject_name=r["subject_name"],
-                    chapter=r["chapter"],
-                    key_takeaways=json.loads(r["key_takeaways_json"]),
-                    mcqs=[MCQQuestion(**m) for m in json.loads(r["mcqs_json"])],
-                    flashcards=[FlashcardItem(**f) for f in json.loads(r["flashcards_json"])],
-                    revision_sheet=ExamRevisionSheet(**json.loads(r["revision_sheet_json"])),
+                    user_id=r["user_id"],
+                    score=r["score"],
+                    total=r["total"],
+                    percentage=r["percentage"],
+                    passed=bool(r["passed"]),
+                    time_taken_seconds=r["time_taken_seconds"],
+                    answers=json.loads(r["answers_json"]) if r["answers_json"] else {},
+                    topic_performance=json.loads(r["topic_performance_json"]) if r["topic_performance_json"] else {},
+                    detailed_breakdown=json.loads(r["breakdown_json"]) if r["breakdown_json"] else [],
                     created_at=r["created_at"],
                 )
             )
         return result
+
+    def update_flashcard_progress(self, kit_id: str, user_id: str, card_id: str, status: str) -> StudentKitProgress:
+        with self._conn:
+            self._conn.execute(
+                "UPDATE flashcards SET review_status = ? WHERE id = ?",
+                (status, card_id),
+            )
+            cursor = self._conn.cursor()
+            cursor.execute(
+                "SELECT * FROM lectra_student_kit_progress WHERE user_id = ? AND kit_id = ?",
+                (user_id, kit_id),
+            )
+            row = cursor.fetchone()
+            fc_status_map = {}
+            if row and row["flashcards_progress_json"]:
+                try:
+                    fc_status_map = json.loads(row["flashcards_progress_json"])
+                except Exception:
+                    fc_status_map = {}
+            fc_status_map[card_id] = status
+
+            mastered_cnt = sum(1 for s in fc_status_map.values() if s == "mastered")
+            review_cnt = sum(1 for s in fc_status_map.values() if s == "needs_review")
+
+            cursor.execute("SELECT flashcards_json FROM lectra_study_kits WHERE id = ? OR lecture_id = ?", (kit_id, kit_id))
+            k_row = cursor.fetchone()
+            total_cards = len(fc_status_map)
+            if k_row and k_row["flashcards_json"]:
+                try:
+                    cards_list = json.loads(k_row["flashcards_json"])
+                    total_cards = max(total_cards, len(cards_list))
+                    # Also update review_status in lectra_study_kits.flashcards_json
+                    updated_cards = []
+                    for c in cards_list:
+                        if c.get("id") == card_id:
+                            c["review_status"] = status
+                        updated_cards.append(c)
+                    self._conn.execute(
+                        "UPDATE lectra_study_kits SET flashcards_json = ? WHERE id = ? OR lecture_id = ?",
+                        (json.dumps(updated_cards), kit_id, kit_id),
+                    )
+                except Exception:
+                    pass
+
+            pct = round((mastered_cnt / max(total_cards, 1)) * 100, 1)
+
+            if row:
+                self._conn.execute(
+                    """
+                    UPDATE lectra_student_kit_progress
+                    SET cards_mastered = ?, cards_needs_review = ?, total_cards = ?,
+                        flashcards_progress_json = ?, last_practiced_at = ?
+                    WHERE user_id = ? AND kit_id = ?
+                    """,
+                    (mastered_cnt, review_cnt, total_cards, json.dumps(fc_status_map), utc_now(), user_id, kit_id),
+                )
+            else:
+                self._conn.execute(
+                    """
+                    INSERT INTO lectra_student_kit_progress
+                    (id, user_id, kit_id, cards_mastered, cards_needs_review, total_cards, flashcards_progress_json,
+                     quizzes_taken, best_quiz_score, last_quiz_score, last_practiced_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        f"prog_{uuid4().hex[:10]}",
+                        user_id,
+                        kit_id,
+                        mastered_cnt,
+                        review_cnt,
+                        total_cards,
+                        json.dumps(fc_status_map),
+                        0,
+                        None,
+                        None,
+                        utc_now(),
+                    ),
+                )
+        return self.get_student_kit_progress(kit_id, user_id)
+
+    def get_student_kit_progress(self, kit_id: str, user_id: str = "usr_lectra_default") -> StudentKitProgress:
+        cursor = self._conn.cursor()
+        cursor.execute(
+            "SELECT * FROM lectra_student_kit_progress WHERE user_id = ? AND kit_id = ?",
+            (user_id, kit_id),
+        )
+        row = cursor.fetchone()
+        if row:
+            total = row["total_cards"]
+            mastered = row["cards_mastered"]
+            pct = round((mastered / max(total, 1)) * 100, 1)
+            return StudentKitProgress(
+                kit_id=kit_id,
+                user_id=user_id,
+                cards_mastered=mastered,
+                cards_needs_review=row["cards_needs_review"],
+                total_cards=total,
+                flashcard_progress_pct=pct,
+                quizzes_taken=row["quizzes_taken"],
+                best_quiz_score=row["best_quiz_score"],
+                last_quiz_score=row["last_quiz_score"],
+                last_practiced_at=row["last_practiced_at"],
+            )
+        # Check kit card count
+        cursor.execute("SELECT flashcards_json FROM lectra_study_kits WHERE id = ? OR lecture_id = ?", (kit_id, kit_id))
+        k_row = cursor.fetchone()
+        total = 0
+        if k_row and k_row["flashcards_json"]:
+            try:
+                total = len(json.loads(k_row["flashcards_json"]))
+            except Exception:
+                pass
+        return StudentKitProgress(
+            kit_id=kit_id,
+            user_id=user_id,
+            cards_mastered=0,
+            cards_needs_review=0,
+            total_cards=total,
+            flashcard_progress_pct=0.0,
+            quizzes_taken=0,
+            best_quiz_score=None,
+            last_quiz_score=None,
+            last_practiced_at=utc_now(),
+        )
 
     def list_flashcards(self, study_kit_id: Optional[str] = None) -> List[FlashcardItem]:
         cursor = self._conn.cursor()
@@ -2886,10 +3769,19 @@ By projecting with $W_i^Q, W_i^K, W_i^V$, each attention head operates in a dist
     def save_vault_note(self, vn: SectionVaultNote) -> SectionVaultNote:
         sec_val = vn.section.value if hasattr(vn.section, "value") else str(vn.section)
         vis_val = vn.visibility.value if hasattr(vn.visibility, "value") else str(vn.visibility)
+        scope_val = vn.sharing_scope.value if hasattr(vn.sharing_scope, "value") else str(vn.sharing_scope)
         ver_val = vn.verification_status.value if hasattr(vn.verification_status, "value") else str(vn.verification_status)
+
+        # Explicit official source check rule: Cannot be 'source_verified' unless verified against official source
+        if ver_val == "source_verified" and (not vn.official_source_reference or not vn.official_source_reference.strip()):
+            ver_val = "community_reviewed" if vn.upvotes >= 3 else "unverified"
+            vn.verification_status = VerificationStatus(ver_val)
+
         mn_id = vn.master_notes_id or vn.lecture_id
         src_sec_json = json.dumps([s.value if hasattr(s, "value") else str(s) for s in vn.source_sections])
+        allowed_sec_json = json.dumps([s.value if hasattr(s, "value") else str(s) for s in vn.allowed_sections])
         tags_json = json.dumps(vn.tags)
+        upload_date_val = vn.upload_date or vn.created_at or utc_now()
 
         with self._conn:
             self._conn.execute(
@@ -2897,8 +3789,10 @@ By projecting with $W_i^Q, W_i^K, W_i^V$, each attention head operates in a dist
                 INSERT OR REPLACE INTO lectra_vault_notes
                 (id, master_notes_id, lecture_id, title, chapter, subject_id, subject_name, subject_code, professor, section,
                  source_sections_json, lecture_date, contributor_id, contributor_name, contributor_avatar,
-                 visibility, verification_status, upvotes, reports_count, summary, download_available, tags_json, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 visibility, sharing_scope, allowed_sections_json, enrolled_course, explicit_permission_granted,
+                 verification_status, official_source_reference, sources_count, upvotes, reports_count, summary,
+                 download_available, tags_json, upload_date, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     vn.id,
@@ -2917,12 +3811,19 @@ By projecting with $W_i^Q, W_i^K, W_i^V$, each attention head operates in a dist
                     vn.contributor_name,
                     vn.contributor_avatar,
                     vis_val,
+                    scope_val,
+                    allowed_sec_json,
+                    vn.enrolled_course,
+                    1 if vn.explicit_permission_granted else 0,
                     ver_val,
+                    vn.official_source_reference,
+                    vn.sources_count,
                     vn.upvotes,
                     vn.reports_count,
                     vn.summary,
                     1 if vn.download_available else 0,
                     tags_json,
+                    upload_date_val,
                     vn.created_at,
                 ),
             )
@@ -2959,45 +3860,159 @@ By projecting with $W_i^Q, W_i^K, W_i^V$, each attention head operates in a dist
                     vn.created_at,
                 ),
             )
+            # Record in contribution history
+            self._conn.execute(
+                """
+                INSERT OR REPLACE INTO lectra_contribution_history
+                (id, user_id, user_name, user_section, action_type, target_note_id, target_title, subject_code, chapter, details, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    f"his_{uuid4().hex[:10]}",
+                    vn.contributor_id,
+                    vn.contributor_name,
+                    sec_val,
+                    "shared_note",
+                    vn.id,
+                    vn.title,
+                    vn.subject_code,
+                    vn.chapter,
+                    f"Contributed verified master note for Section {sec_val} ({vn.subject_code} - {vn.chapter})",
+                    utc_now(),
+                ),
+            )
         realtime_broker.publish("community_contributions", "UPSERT", {"id": vn.id, "title": vn.title, "section": sec_val}, user_id=vn.contributor_id)
         return vn
+
+    def get_vault_note(self, vault_id: str) -> Optional[SectionVaultNote]:
+        cursor = self._conn.cursor()
+        cursor.execute("SELECT * FROM lectra_vault_notes WHERE id = ?", (vault_id,))
+        row = cursor.fetchone()
+        if not row:
+            return None
+        return SectionVaultNote(
+            id=row["id"],
+            master_notes_id=row["master_notes_id"] if "master_notes_id" in row.keys() else None,
+            lecture_id=row["lecture_id"],
+            title=row["title"],
+            chapter=row["chapter"],
+            subject_id=row["subject_id"],
+            subject_name=row["subject_name"],
+            subject_code=row["subject_code"],
+            professor=row["professor"],
+            section=SectionId(row["section"]),
+            source_sections=[SectionId(s) for s in json.loads(row["source_sections_json"]) if s in [sec.value for sec in SectionId]],
+            lecture_date=row["lecture_date"],
+            contributor_id=row["contributor_id"],
+            contributor_name=row["contributor_name"],
+            contributor_avatar=row["contributor_avatar"],
+            visibility=VisibilityType(row["visibility"]) if "visibility" in row.keys() and row["visibility"] else VisibilityType.SECTION,
+            sharing_scope=SharingScope(row["sharing_scope"]) if "sharing_scope" in row.keys() and row["sharing_scope"] else SharingScope.ALL_SECTIONS,
+            allowed_sections=[SectionId(s) for s in json.loads(row["allowed_sections_json"])] if "allowed_sections_json" in row.keys() and row["allowed_sections_json"] else [],
+            enrolled_course=row["enrolled_course"] if "enrolled_course" in row.keys() else None,
+            explicit_permission_granted=bool(row["explicit_permission_granted"]) if "explicit_permission_granted" in row.keys() else False,
+            verification_status=VerificationStatus(row["verification_status"]),
+            official_source_reference=row["official_source_reference"] if "official_source_reference" in row.keys() else None,
+            sources_count=row["sources_count"] if "sources_count" in row.keys() and row["sources_count"] else 1,
+            upvotes=row["upvotes"],
+            reports_count=row["reports_count"],
+            summary=row["summary"],
+            download_available=bool(row["download_available"]),
+            tags=json.loads(row["tags_json"]) if row["tags_json"] else [],
+            upload_date=row["upload_date"] if "upload_date" in row.keys() else row["created_at"],
+            created_at=row["created_at"],
+        )
 
     def list_vault_notes(
         self,
         section: Optional[str] = None,
         subject: Optional[str] = None,
+        chapter: Optional[str] = None,
         professor: Optional[str] = None,
+        lecture_date: Optional[str] = None,
         verification_status: Optional[str] = None,
         search_query: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        requesting_user_id: Optional[str] = None,
+        requesting_user_section: Optional[str] = None,
+        requesting_user_course: Optional[str] = None,
     ) -> List[SectionVaultNote]:
         cursor = self._conn.cursor()
-        # RLS Rule: Public or community content must be explicitly shared (visibility in section or public)
-        query = "SELECT * FROM lectra_vault_notes WHERE (visibility IS NULL OR visibility IN ('section', 'public'))"
+        query = "SELECT * FROM lectra_vault_notes WHERE 1=1"
         params: List[Any] = []
 
+        # RLS & Privacy enforcement: Never expose private student workspaces to other students
+        if requesting_user_id:
+            query += """
+            AND (
+                contributor_id = ?
+                OR (
+                    (sharing_scope IS NULL OR sharing_scope != 'private')
+                    AND (visibility IS NULL OR visibility != 'private')
+                    AND (
+                        sharing_scope = 'all_sections'
+                        OR visibility IN ('section', 'public')
+                        OR (sharing_scope = 'course' AND (enrolled_course IS NULL OR enrolled_course = ?))
+                        OR (sharing_scope = 'selected_sections' AND allowed_sections_json LIKE ?)
+                    )
+                )
+            )
+            """
+            sec_param = f"%\"{requesting_user_section or 'A'}\"%"
+            course_param = requesting_user_course or "B.S. Computer Science & AI"
+            params.extend([requesting_user_id, course_param, sec_param])
+        else:
+            # Public/unauthenticated browsing: Only shared public / section notes
+            query += " AND (sharing_scope IS NULL OR sharing_scope != 'private') AND (visibility IS NULL OR visibility IN ('section', 'public'))"
+
+        # Filters
         if section and section.upper() in [s.value for s in SectionId]:
             query += " AND section = ?"
             params.append(section.upper())
         if subject:
             query += " AND (subject_code LIKE ? OR subject_name LIKE ?)"
             params.extend([f"%{subject}%", f"%{subject}%"])
+        if chapter:
+            query += " AND chapter LIKE ?"
+            params.append(f"%{chapter}%")
         if professor:
             query += " AND professor LIKE ?"
             params.append(f"%{professor}%")
+        if lecture_date:
+            query += " AND lecture_date LIKE ?"
+            params.append(f"%{lecture_date}%")
         if verification_status:
             query += " AND verification_status = ?"
             params.append(verification_status)
         if search_query:
-            query += " AND (title LIKE ? OR chapter LIKE ? OR summary LIKE ?)"
-            params.extend([f"%{search_query}%", f"%{search_query}%", f"%{search_query}%"])
+            query += " AND (title LIKE ? OR chapter LIKE ? OR summary LIKE ? OR tags_json LIKE ? OR contributor_name LIKE ? OR professor LIKE ?)"
+            params.extend([f"%{search_query}%", f"%{search_query}%", f"%{search_query}%", f"%{search_query}%", f"%{search_query}%", f"%{search_query}%"])
 
-        query += " ORDER BY upvotes DESC, created_at DESC"
+        # Sorting
+        if sort_by == "upvotes":
+            query += " ORDER BY upvotes DESC, created_at DESC"
+        elif sort_by == "newest":
+            query += " ORDER BY created_at DESC"
+        elif sort_by == "lecture_date":
+            query += " ORDER BY lecture_date DESC, created_at DESC"
+        elif sort_by == "sources":
+            query += " ORDER BY sources_count DESC, upvotes DESC"
+        else:
+            query += " ORDER BY upvotes DESC, created_at DESC"
+
         cursor.execute(query, params)
         rows = cursor.fetchall()
         result = []
         for r in rows:
             keys = set(r.keys())
             vis_str = r["visibility"] if "visibility" in keys and r["visibility"] else "section"
+            scope_str = r["sharing_scope"] if "sharing_scope" in keys and r["sharing_scope"] else "all_sections"
+            allowed_secs = []
+            if "allowed_sections_json" in keys and r["allowed_sections_json"]:
+                try:
+                    allowed_secs = [SectionId(s) for s in json.loads(r["allowed_sections_json"])]
+                except Exception:
+                    allowed_secs = []
             result.append(
                 SectionVaultNote(
                     id=r["id"],
@@ -3005,7 +4020,7 @@ By projecting with $W_i^Q, W_i^K, W_i^V$, each attention head operates in a dist
                     lecture_id=r["lecture_id"],
                     title=r["title"],
                     chapter=r["chapter"],
-                    subject_id=r["subject_id"],
+                    subject_id=r["subject_id"] if "subject_id" in keys else None,
                     subject_name=r["subject_name"],
                     subject_code=r["subject_code"],
                     professor=r["professor"],
@@ -3016,12 +4031,19 @@ By projecting with $W_i^Q, W_i^K, W_i^V$, each attention head operates in a dist
                     contributor_name=r["contributor_name"],
                     contributor_avatar=r["contributor_avatar"],
                     visibility=VisibilityType(vis_str) if vis_str in [v.value for v in VisibilityType] else VisibilityType.SECTION,
+                    sharing_scope=SharingScope(scope_str) if scope_str in [s.value for s in SharingScope] else SharingScope.ALL_SECTIONS,
+                    allowed_sections=allowed_secs,
+                    enrolled_course=r["enrolled_course"] if "enrolled_course" in keys and r["enrolled_course"] else "B.S. Computer Science & AI",
+                    explicit_permission_granted=bool(r["explicit_permission_granted"]) if "explicit_permission_granted" in keys else True,
                     verification_status=VerificationStatus(r["verification_status"]),
+                    official_source_reference=r["official_source_reference"] if "official_source_reference" in keys else None,
+                    sources_count=int(r["sources_count"]) if "sources_count" in keys and r["sources_count"] is not None else 1,
                     upvotes=r["upvotes"],
                     reports_count=r["reports_count"],
                     summary=r["summary"],
                     download_available=bool(r["download_available"]),
                     tags=json.loads(r["tags_json"]),
+                    upload_date=r["upload_date"] if "upload_date" in keys and r["upload_date"] else r["created_at"],
                     created_at=r["created_at"],
                 )
             )
@@ -3091,12 +4113,14 @@ By projecting with $W_i^Q, W_i^K, W_i^V$, each attention head operates in a dist
 
     # --- Reviews ---
     def save_review(self, rev: CommunityReview) -> CommunityReview:
+        replies_json = json.dumps(rev.replies)
         with self._conn:
             self._conn.execute(
                 """
                 INSERT OR REPLACE INTO lectra_community_reviews
-                (id, vault_note_id, user_id, user_name, user_section, rating, comment, is_inaccuracy_report, inaccuracy_details, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (id, vault_note_id, user_id, user_name, user_section, rating, comment, is_inaccuracy_report,
+                 inaccuracy_details, replies_json, verified_against_official_source, official_source_citation, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     rev.id,
@@ -3108,32 +4132,306 @@ By projecting with $W_i^Q, W_i^K, W_i^V$, each attention head operates in a dist
                     rev.comment,
                     1 if rev.is_inaccuracy_report else 0,
                     rev.inaccuracy_details,
+                    replies_json,
+                    1 if rev.verified_against_official_source else 0,
+                    rev.official_source_citation,
                     rev.created_at,
                 ),
             )
+            # Record in contribution history
+            act_type = "reported" if rev.is_inaccuracy_report else ("source_verified" if rev.verified_against_official_source else "reviewed")
+            self._conn.execute(
+                """
+                INSERT OR REPLACE INTO lectra_contribution_history
+                (id, user_id, user_name, user_section, action_type, target_note_id, target_title, subject_code, chapter, details, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    f"his_{uuid4().hex[:10]}",
+                    rev.user_id,
+                    rev.user_name,
+                    rev.user_section.value if hasattr(rev.user_section, "value") else str(rev.user_section),
+                    act_type,
+                    rev.vault_note_id,
+                    "Academic Note",
+                    "CS",
+                    "Chapter Review",
+                    f"{rev.rating}★ Review: {rev.comment[:80]}",
+                    utc_now(),
+                ),
+            )
+            # If review verified against official source, upgrade vault note status!
+            if rev.verified_against_official_source and rev.official_source_citation:
+                self._conn.execute(
+                    """
+                    UPDATE lectra_vault_notes
+                    SET verification_status = 'source_verified', official_source_reference = ?
+                    WHERE id = ?
+                    """,
+                    (rev.official_source_citation, rev.vault_note_id),
+                )
         return rev
+
+    def add_review_reply(
+        self,
+        review_id: str,
+        user_id: Any,
+        user_name: Optional[str] = None,
+        user_section: Optional[str] = None,
+        reply_text: Optional[str] = None,
+    ) -> Optional[CommunityReview]:
+        if isinstance(user_id, dict):
+            d = user_id
+            user_name = d.get("user_name", "Student")
+            user_section = d.get("user_section", "A")
+            reply_text = d.get("comment", d.get("text", ""))
+            user_id = d.get("user_id", "")
+
+        cursor = self._conn.cursor()
+        cursor.execute("SELECT * FROM lectra_community_reviews WHERE id = ?", (review_id,))
+        row = cursor.fetchone()
+        if not row:
+            return None
+        keys = set(row.keys())
+        replies = json.loads(row["replies_json"]) if "replies_json" in keys and row["replies_json"] else []
+        reply_obj = {
+            "id": f"rep_{uuid4().hex[:8]}",
+            "user_id": user_id,
+            "user_name": user_name,
+            "user_section": user_section,
+            "text": reply_text or "",
+            "comment": reply_text or "",
+            "created_at": utc_now(),
+        }
+        replies.append(reply_obj)
+        with self._conn:
+            self._conn.execute(
+                "UPDATE lectra_community_reviews SET replies_json = ? WHERE id = ?",
+                (json.dumps(replies), review_id),
+            )
+            # Notify review owner of the reply
+            self.save_notification(
+                NotificationItem(
+                    user_id=row["user_id"],
+                    title=f"New Reply from {user_name} (Section {user_section})",
+                    message=f"'{reply_text[:90]}'",
+                    type="review",
+                    link=f"/community?reviewId={review_id}",
+                    read=False,
+                )
+            )
+        cursor.execute("SELECT * FROM lectra_community_reviews WHERE id = ?", (review_id,))
+        updated_row = cursor.fetchone()
+        return self._row_to_community_review(updated_row)
+
+    def _row_to_community_review(self, r: sqlite3.Row) -> CommunityReview:
+        keys = set(r.keys())
+        replies = json.loads(r["replies_json"]) if "replies_json" in keys and r["replies_json"] else []
+        return CommunityReview(
+            id=r["id"],
+            vault_note_id=r["vault_note_id"],
+            user_id=r["user_id"],
+            user_name=r["user_name"],
+            user_section=SectionId(r["user_section"]) if r["user_section"] in [s.value for s in SectionId] else SectionId.A,
+            rating=r["rating"],
+            comment=r["comment"],
+            is_inaccuracy_report=bool(r["is_inaccuracy_report"]),
+            inaccuracy_details=r["inaccuracy_details"] if "inaccuracy_details" in keys else None,
+            verified_against_official_source=bool(r["verified_against_official_source"]) if "verified_against_official_source" in keys else False,
+            official_source_citation=r["official_source_citation"] if "official_source_citation" in keys else None,
+            replies=replies,
+            created_at=r["created_at"],
+        )
 
     def list_reviews_for_note(self, vault_note_id: str) -> List[CommunityReview]:
         cursor = self._conn.cursor()
         cursor.execute("SELECT * FROM lectra_community_reviews WHERE vault_note_id = ? ORDER BY created_at DESC", (vault_note_id,))
         rows = cursor.fetchall()
-        result = []
-        for r in rows:
-            result.append(
-                CommunityReview(
-                    id=r["id"],
-                    vault_note_id=r["vault_note_id"],
-                    user_id=r["user_id"],
-                    user_name=r["user_name"],
-                    user_section=SectionId(r["user_section"]),
-                    rating=r["rating"],
-                    comment=r["comment"],
-                    is_inaccuracy_report=bool(r["is_inaccuracy_report"]),
-                    inaccuracy_details=r["inaccuracy_details"],
-                    created_at=r["created_at"],
-                )
+        return [self._row_to_community_review(r) for r in rows]
+
+    def check_duplicates(
+        self,
+        subject_code: Any,
+        chapter: Optional[str] = None,
+        section: Optional[SectionId] = None,
+        professor: Optional[str] = None,
+        lecture_date: Optional[str] = None,
+        summary: Optional[str] = None,
+    ) -> DuplicateCheckResult:
+        if isinstance(subject_code, DuplicateCheckRequest):
+            req = subject_code
+            chapter = req.chapter
+            section = req.section
+            professor = req.professor or ""
+            lecture_date = req.lecture_date or ""
+            summary = req.summary
+            subject_code = req.subject_code
+
+        sec_val = section.value if hasattr(section, "value") else str(section) if section else ""
+        cursor = self._conn.cursor()
+        cursor.execute(
+            """
+            SELECT * FROM lectra_vault_notes
+            WHERE LOWER(subject_code) = LOWER(?) OR LOWER(subject_name) LIKE LOWER(?)
+            """,
+            (subject_code.strip(), f"%{subject_code.strip()}%"),
+        )
+        candidates = cursor.fetchall()
+        if not candidates:
+            return DuplicateCheckResult(
+                is_potential_duplicate=False,
+                similarity_score=0.0,
+                warning_message=None,
+                reasons=[],
             )
-        return result
+
+        best_score = 0.0
+        best_match = None
+        reasons = []
+
+        norm_chapter = chapter.lower().strip()
+        norm_prof = professor.lower().strip()
+        norm_date = lecture_date.strip()
+
+        for c in candidates:
+            score = 0.0
+            r_list = []
+
+            # 1. Subject match
+            score += 0.30
+
+            # 2. Chapter match
+            c_chap = (c["chapter"] or "").lower().strip()
+            if norm_chapter in c_chap or c_chap in norm_chapter:
+                score += 0.35
+                r_list.append(f"Identical or overlapping chapter: '{c['chapter']}'")
+
+            # 3. Section match
+            if c["section"] == (section.value if hasattr(section, "value") else str(section)):
+                score += 0.15
+                r_list.append(f"Matching classroom section: Section {c['section']}")
+
+            # 4. Professor match
+            c_prof = (c["professor"] or "").lower().strip()
+            if norm_prof in c_prof or c_prof in norm_prof:
+                score += 0.10
+                r_list.append(f"Identical course instructor: {c['professor']}")
+
+            # 5. Lecture date match
+            if c["lecture_date"] and norm_date and c["lecture_date"][:10] == norm_date[:10]:
+                score += 0.10
+                r_list.append(f"Matching lecture date: {c['lecture_date']}")
+
+            if score > best_score:
+                best_score = score
+                best_match = c
+                reasons = r_list
+
+        is_duplicate = best_score >= 0.60
+        warning_msg = None
+        if is_duplicate and best_match:
+            warning_msg = (
+                f"Potential Duplicate Detected ({int(best_score * 100)}% match): "
+                f"Section {best_match['section']} already has an existing master note '{best_match['title']}' "
+                f"for {best_match['chapter']} contributed by {best_match['contributor_name']}. "
+                f"Please ensure your contribution contains unique blackboard derivations, complementary proofs, or additional professor explanations."
+            )
+
+        return DuplicateCheckResult(
+            is_potential_duplicate=is_duplicate,
+            similarity_score=round(best_score, 2),
+            matched_note_id=best_match["id"] if best_match else None,
+            matched_title=best_match["title"] if best_match else None,
+            matched_contributor=best_match["contributor_name"] if best_match else None,
+            matched_section=best_match["section"] if best_match else None,
+            warning_message=warning_msg,
+            reasons=reasons,
+        )
+
+    def get_contributor_profile(self, user_id: str) -> ContributorProfile:
+        user = self.get_user_by_id(user_id) or self.get_user_by_id("usr_lectra_default")
+        cursor = self._conn.cursor()
+
+        cursor.execute("SELECT COUNT(*), COALESCE(SUM(upvotes), 0) FROM lectra_vault_notes WHERE contributor_id = ?", (user_id,))
+        contrib_row = cursor.fetchone()
+        notes_count = contrib_row[0] if contrib_row else 0
+        upvotes_count = contrib_row[1] if contrib_row else 0
+
+        cursor.execute("SELECT COUNT(*) FROM lectra_vault_notes WHERE contributor_id = ? AND verification_status = 'source_verified'", (user_id,))
+        verified_count = cursor.fetchone()[0] or 0
+
+        cursor.execute("SELECT COUNT(*) FROM lectra_community_reviews WHERE user_id = ?", (user_id,))
+        reviews_count = cursor.fetchone()[0] or 0
+
+        cursor.execute("SELECT * FROM lectra_contribution_history WHERE user_id = ? ORDER BY created_at DESC LIMIT 15", (user_id,))
+        hist_rows = cursor.fetchall()
+        history_items = [
+            ContributionHistoryItem(
+                id=h["id"],
+                user_id=h["user_id"],
+                user_name=h["user_name"],
+                user_section=SectionId(h["user_section"]) if h["user_section"] in [s.value for s in SectionId] else SectionId.A,
+                action_type=h["action_type"],
+                target_note_id=h["target_note_id"],
+                target_title=h["target_title"],
+                subject_code=h["subject_code"],
+                chapter=h["chapter"],
+                details=h["details"],
+                created_at=h["created_at"],
+            )
+            for h in hist_rows
+        ]
+
+        badges = ["Nine-Section Scholar"]
+        if notes_count >= 1:
+            badges.append("Active Contributor")
+        if notes_count >= 3:
+            badges.append("Academic Pioneer")
+        if upvotes_count >= 20:
+            badges.append("Top Peer Rated")
+        if verified_count >= 1:
+            badges.append("Source Verifier")
+        if reviews_count >= 2:
+            badges.append("Peer Reviewer")
+
+        return ContributorProfile(
+            user_id=user.id if user else user_id,
+            full_name=user.full_name if user else "Alex Rivera",
+            university=user.university if user else "Stanford University",
+            course=user.course if user else "B.S. Computer Science & AI",
+            section=user.section if user else SectionId.A,
+            avatar_url=user.avatar_url if user else None,
+            total_notes_contributed=notes_count,
+            total_upvotes_received=upvotes_count,
+            total_reviews_submitted=reviews_count,
+            verified_notes_count=verified_count,
+            badges=badges,
+            recent_history=history_items,
+        )
+
+    def list_contribution_history(self, user_id: Optional[str] = None, limit: int = 50) -> List[ContributionHistoryItem]:
+        cursor = self._conn.cursor()
+        if user_id:
+            cursor.execute("SELECT * FROM lectra_contribution_history WHERE user_id = ? ORDER BY created_at DESC LIMIT ?", (user_id, limit))
+        else:
+            cursor.execute("SELECT * FROM lectra_contribution_history ORDER BY created_at DESC LIMIT ?", (limit,))
+        rows = cursor.fetchall()
+        return [
+            ContributionHistoryItem(
+                id=h["id"],
+                user_id=h["user_id"],
+                user_name=h["user_name"],
+                user_section=SectionId(h["user_section"]) if h["user_section"] in [s.value for s in SectionId] else SectionId.A,
+                action_type=h["action_type"],
+                target_note_id=h["target_note_id"],
+                target_title=h["target_title"],
+                subject_code=h["subject_code"],
+                chapter=h["chapter"],
+                details=h["details"],
+                created_at=h["created_at"],
+            )
+            for h in rows
+        ]
 
     # --- Notifications ---
     def save_notification(self, notif: NotificationItem) -> NotificationItem:
@@ -3322,12 +4620,11 @@ By projecting with $W_i^Q, W_i^K, W_i^V$, each attention head operates in a dist
                 return None
         item = self._row_to_source_item(r)
         if (
-            requesting_user_id
-            and item.user_id != requesting_user_id
-            and item.visibility == VisibilityType.PRIVATE
+            item.visibility == VisibilityType.PRIVATE
             and item.bucket_id != StorageBucketType.SHARED_MATERIALS
         ):
-            raise PermissionError("RLS Policy Violation: Users cannot access another user's private uploaded file.")
+            if not requesting_user_id or item.user_id != requesting_user_id:
+                raise PermissionError("RLS Policy Violation: Users cannot access another user's private uploaded file.")
         return item
 
     def list_uploaded_sources(
@@ -3495,78 +4792,311 @@ By projecting with $W_i^Q, W_i^K, W_i^V$, each attention head operates in a dist
         cursor = self._conn.cursor()
         cursor.execute(
             f"""
-            SELECT * FROM lectra_vault_notes 
-            WHERE (subject_code LIKE ? OR subject_name LIKE ?) 
-            AND section IN ({','.join(['?']*len(sec_names))})
+            SELECT v.*, m.key_definitions_json, m.important_formulas_json, m.important_examples_json, 
+                   m.diagram_summaries_json, m.summary as m_summary, m.professor_style_json
+            FROM lectra_vault_notes v
+            LEFT JOIN lectra_master_notes m ON v.master_notes_id = m.id
+            WHERE (v.subject_code LIKE ? OR v.subject_name LIKE ?) 
+            AND v.section IN ({','.join(['?']*len(sec_names))})
             """,
             [f"%{subject_code}%", f"%{subject_code}%"] + sec_names,
         )
-        notes = cursor.fetchall()
+        vault_rows = cursor.fetchall()
 
         shared_concepts = [
             "Mathematical formulation of state transition invariants",
-            "Quorum intersection rules and majority voting",
-            "Formal proof of correctness under network partitions"
+            "Quorum intersection rules and majority voting (floor(N/2)+1)",
+            "Formal proof of correctness under asynchronous network partitions"
         ]
+
         section_specific: Dict[str, List[str]] = {}
-        professor_emphasis: Dict[str, List[str]] = {}
+        professor_emphasis_dict: Dict[str, List[str]] = {}
         exam_tips: Dict[str, List[str]] = {}
+        
+        # Phase 4: 7-dimensional academic comparison fields
+        topics_covered: Dict[str, List[str]] = {}
+        definitions: Dict[str, List[Dict[str, str]]] = {}
+        formulas: Dict[str, List[Dict[str, str]]] = {}
+        examples: Dict[str, List[Dict[str, Any]]] = {}
+        diagrams: Dict[str, List[str]] = {}
+        additional_lecture_explanations: Dict[str, List[str]] = {}
+        unique_insights: Dict[str, List[str]] = {}
+
+        # Preset domain knowledge for Sections A-I across common chapters (CS-244, CS-224N, CS-161)
+        curated_section_data = {
+            "A": {
+                "topics": ["Leader Election Safety", "Heartbeat Mechanism", "Log Matching Property", "Figure 8 Commit Hazard"],
+                "definitions": [
+                    {"term": "Election Safety", "definition": "At most one leader can be elected in a given term."},
+                    {"term": "Leader Append-Only", "definition": "A leader never overwrites or truncates its own entries; it only appends."}
+                ],
+                "formulas": [
+                    {"name": "Quorum Requirement", "formula": "Q = \\lfloor N/2 \\rfloor + 1", "notes": "Strict majority required for election and commitment"},
+                    {"name": "Election Timeout Range", "formula": "T_{timeout} \\sim \\mathcal{U}(150\\text{ms}, 300\\text{ms})", "notes": "Uniformly randomized to avoid split votes"}
+                ],
+                "examples": [
+                    {"title": "5-Node Partition Isolation", "description": "Nodes {1, 2} isolated from {3, 4, 5}. Minority leader increments term but cannot commit entries."}
+                ],
+                "diagrams": ["Raft State Transition Diagram (Follower -> Candidate -> Leader)", "5-Node Cluster Split-Brain Prevention Diagram"],
+                "emphasis": ["Dr. Thorne emphasized: Never update commitIndex using prior terms directly (Figure 8 protocol invariant)."],
+                "additional": ["Derivation of uniform distribution bounds for heartbeats based on broadcastTime << electionTimeout << MTBF."],
+                "tips": ["Midterm Question 2 preview: Derive quorum size for N=7 and explain Figure 8 failure trace."],
+                "unique": ["Section A received deep whiteboard analysis of Figure 8 race conditions with 5 distinct timeline traces."]
+            },
+            "B": {
+                "topics": ["Scaled Dot-Product Attention", "Query-Key-Value Projection", "Softmax Saturation", "Multi-Head Concatenation"],
+                "definitions": [
+                    {"term": "Self-Attention", "definition": "Mechanism relating different positions of a single sequence to compute a representation of the sequence."},
+                    {"term": "Softmax Saturation", "definition": "Vanishing gradient phenomenon occurring when dot products grow large in high-dimensional vector spaces."}
+                ],
+                "formulas": [
+                    {"name": "Scaled Dot-Product Attention", "formula": "\\text{Attention}(Q, K, V) = \\text{softmax}\\left(\\frac{QK^T}{\\sqrt{d_k}}\\right)V", "notes": "Dividing by sqrt(d_k) preserves unit variance when components are i.i.d."},
+                    {"name": "Multi-Head Attention", "formula": "\\text{MultiHead}(Q, K, V) = \\text{Concat}(\\text{head}_1, \\dots, \\text{head}_h)W^O", "notes": "Linear projection across h subspaces"}
+                ],
+                "examples": [
+                    {"title": "Unit Variance Preservation Calculation", "description": "For q, k ~ N(0, 1) in R^{d_k}, Var(q . k) = d_k. Division by sqrt(d_k) scales variance back to 1."}
+                ],
+                "diagrams": ["Scaled Dot-Product Attention Architecture", "Multi-Head Attention Parallel Subspace Projection"],
+                "emphasis": ["Prof. Vance emphasized: Dimension scaling factor preserves unit variance in high dimensions to avoid gradient vanishing."],
+                "additional": ["Geometric interpretation of attention matrices as dynamic, content-dependent adjacency graphs."],
+                "tips": ["Expect full mathematical derivation of Var(Q K^T) on Midterm 1."],
+                "unique": ["Section B covered rigorous linear algebra proof of logit covariance and numerical stability proofs for fp16 training."]
+            },
+            "C": {
+                "topics": ["Fast Log Rollback Optimization", "Log Compaction", "InstallSnapshot RPC", "State Machine Safety"],
+                "definitions": [
+                    {"term": "Log Matching Property", "definition": "If two entries in different logs have identical index and term, they store identical commands and logs are identical up to that index."},
+                    {"term": "Snapshotting", "definition": "Replacing entire preceding log records with point-in-time state machine snapshot up to lastIncludedIndex."}
+                ],
+                "formulas": [
+                    {"name": "Fast Rollback Index Jump", "formula": "\\text{nextIndex}[j] = \\text{firstIndexOfConflictTerm}(j)", "notes": "Reduces rejected AppendEntries RPCs from O(log length) to O(conflicting terms)"}
+                ],
+                "examples": [
+                    {"title": "Fast Log Rollback Protocol Trace", "description": "Follower returns conflicting term and first index; leader jumps nextIndex directly to avoid decrementing one-by-one."}
+                ],
+                "diagrams": ["Log Compaction and InstallSnapshot RPC Memory Layout", "Fast Log Rollback RPC Round-Trip Trace"],
+                "emphasis": ["Dr. Thorne emphasized: Follower log truncation upon receiving conflicting leader entries must only delete starting from mismatch index."],
+                "additional": ["Production systems implementation details: disk fsync latency bottlenecks during AppendEntries persistence."],
+                "tips": ["Focus on fast rollback pseudocode; likely to be an implementation coding design question."],
+                "unique": ["Section C had live code walkthrough in Go showing goroutine synchronization and RPC retry idempotency."]
+            },
+            "D": {
+                "topics": ["Computational Complexity Comparison (Self-Attention vs RNN/CNN)", "Positional Encodings", "Hardware Memory Bandwidth", "KV Cache"],
+                "definitions": [
+                    {"term": "Maximum Path Length", "definition": "Shortest distance between any two input and output positions in feedforward / recurrent networks."},
+                    {"term": "KV Cache", "definition": "Caching computed Key and Value vectors across autoregressive decoding steps to avoid redundant O(N^2) computations."}
+                ],
+                "formulas": [
+                    {"name": "Self-Attention Complexity", "formula": "\\mathcal{O}(n^2 \\cdot d)", "notes": "Dominated by sequence length n when n > d; highly parallelizable O(1) sequential ops"}
+                ],
+                "examples": [
+                    {"title": "Inference Latency Breakdown", "description": "Prefill phase (compute-bound) vs Decode phase (memory bandwidth-bound KV-cache reads)."}
+                ],
+                "diagrams": ["Comparative Path Length & Sequential Operations Matrix", "Autoregressive Generation KV Cache Memory Allocation"],
+                "emphasis": ["Prof. Vance emphasized: O(1) sequential operation advantage of self-attention enables distributed GPU acceleration."],
+                "additional": ["Hardware roofline model analysis comparing FLOPs vs High Bandwidth Memory (HBM) throughput."],
+                "tips": ["Memorize the comparative table of maximum path length and layer complexity."],
+                "unique": ["Section D featured in-depth hardware profiling metrics showing roofline analysis on NVIDIA A100 GPUs."]
+            },
+            "E": {
+                "topics": ["Byzantine Fault Tolerance (BFT)", "Equivocation Detection", "PBFT 3-Phase Protocol (Pre-Prepare, Prepare, Commit)"],
+                "definitions": [
+                    {"term": "Byzantine Failure", "definition": "Arbitrary node failure including malicious coordination, spoofing, and sending conflicting messages."},
+                    {"term": "Equivocation", "definition": "A malicious node signing two conflicting statements for the same view/slot."}
+                ],
+                "formulas": [
+                    {"name": "BFT Quorum Tolerance", "formula": "N \\ge 3f + 1", "notes": "Requires strictly greater than 3f nodes to tolerate f Byzantine participants"}
+                ],
+                "examples": [
+                    {"title": "Equivocating Leader Scenario", "description": "Leader sends proposal m to Node 1 and conflicting proposal m' to Node 2. Prepare phase quorums catch conflicting digests."}
+                ],
+                "diagrams": ["PBFT 3-Phase State Machine Consensus Flow", "Equivocation Attack Detection Matrix"],
+                "emphasis": ["Dr. Thorne emphasized: In BFT systems, simple crash-fault majorities (2f+1) are insufficient due to malicious lying nodes."],
+                "additional": ["Cryptographic threshold signatures vs pairwise HMAC MAC authenticators."],
+                "tips": ["Be ready to prove why 3f nodes cannot guarantee progress if f nodes are Byzantine and f nodes are slow."],
+                "unique": ["Section E was provided formal TLA+ specification snippets illustrating 2-thirds quorum intersection safety."]
+            },
+            "F": {
+                "topics": ["Rotary Position Embeddings (RoPE)", "Relative Position Biases", "ALiBi", "Long Context Extrapolation"],
+                "definitions": [
+                    {"term": "RoPE", "definition": "Rotates query and key representations by an angle proportional to sequence position to encode relative distances."},
+                    {"term": "ALiBi", "definition": "Attention with Linear Biases; penalizes attention scores based on query-key distance without explicit position embeddings."}
+                ],
+                "formulas": [
+                    {"name": "RoPE 2D Rotation Matrix", "formula": "R_{\\Theta, m}^{2d} = \\begin{pmatrix} \\cos(m\\theta) & -\\sin(m\\theta) \\\\ \\sin(m\\theta) & \\cos(m\\theta) \\end{pmatrix}", "notes": "Preserves inner product property for relative offset (m - n)"}
+                ],
+                "examples": [
+                    {"title": "Complex Plane Rotation of Key-Query Dot Product", "description": "q_m^T k_n = (R_m q)^T (R_n k) = q^T R_{n-m} k, proving dot product depends purely on relative offset."}
+                ],
+                "diagrams": ["RoPE Orthogonal Complex Plane Rotation", "ALiBi Attention Score Decay Penalty Heatmap"],
+                "emphasis": ["Prof. Elena Vance emphasized: RoPE provides natural decay for distant tokens while maintaining relative translational invariance."],
+                "additional": ["Comparison of RoPE NTK-aware scaling vs linear interpolation for context window expansion (4K to 128K)."],
+                "tips": ["Expect derivation of 2D orthogonal rotation preserving relative dot products on the exam."],
+                "unique": ["Section F explored empirical benchmarks on context window extrapolation up to 128k tokens."]
+            },
+            "G": {
+                "topics": ["Mixture of Experts (MoE)", "Top-k Gating Mechanisms", "Expert Routing", "Load Balancing Loss"],
+                "definitions": [
+                    {"term": "Sparse Mixture of Experts", "definition": "Neural network architecture where only a sparse subset of expert feed-forward subnetworks are activated per token."},
+                    {"term": "Auxiliary Load Balancing Loss", "definition": "Regularization loss penalizing router imbalance to prevent expert collapse."}
+                ],
+                "formulas": [
+                    {"name": "MoE Gating Softmax", "formula": "G(x) = \\text{Softmax}(\\text{TopK}(H(x), k))", "notes": "k experts activated per token; total parameters scaled sublinearly in compute"}
+                ],
+                "examples": [
+                    {"title": "Expert Parallelism All-to-All Dispatch", "description": "Tokens routed across 8 GPU ranks using batched all-to-all collective communications."}
+                ],
+                "diagrams": ["MoE Routing Architecture and Top-2 Gating", "All-to-All Expert Communication Pattern"],
+                "emphasis": ["Prof. Elena Vance emphasized: Auxiliary loss coefficient must be tuned precisely to prevent all tokens routing to the same expert."],
+                "additional": ["System memory bandwidth implications of activating 2 out of 8 experts vs dense models."],
+                "tips": ["Review routing saturation math and gradient flow through sparse top-k gates."],
+                "unique": ["Section G reviewed production DeepSeek and Mixtral router configurations and communication topologies."]
+            },
+            "H": {
+                "topics": ["Splay Trees & Self-Adjusting Heuristics", "Amortized Analysis", "Potential Method", "Zig-Zig and Zig-Zag Rotations"],
+                "definitions": [
+                    {"term": "Amortized Time", "definition": "Average time per operation over a worst-case sequence of operations."},
+                    {"term": "Potential Function", "definition": "A mapping from data structure states to real numbers reflecting stored credit for future expensive operations."}
+                ],
+                "formulas": [
+                    {"name": "Potential Function for Splay Tree", "formula": "\\Phi(T) = \\sum_{x \\in T} r(x) = \\sum_{x \\in T} \\log_2(\\text{size}(x))", "notes": "Yields O(log n) amortized cost for search, insert, and delete"}
+                ],
+                "examples": [
+                    {"title": "Zig-Zig Rotation Analysis", "description": "Double rotation when node and parent are both left or right children; releases significant potential to pay for depth."}
+                ],
+                "diagrams": ["Splay Tree Zig, Zig-Zig, and Zig-Zag Rotation Cases", "Credit Invariant Potential Graph"],
+                "emphasis": ["Dr. Marcus Brody emphasized: Splay trees require NO balance flags or height bits stored in nodes, saving memory."],
+                "additional": ["Static Finger Theorem and Working Set Property proofs."],
+                "tips": ["Midterm question guaranteed on potential function delta calculation during zig-zig step."],
+                "unique": ["Section H performed full mathematical step-by-step telescopic sum proof of the Splay Access Lemma."]
+            },
+            "I": {
+                "topics": ["Network Flow & Max-Flow Min-Cut Theorem", "Ford-Fulkerson Algorithm", "Edmonds-Karp O(VE^2)", "Push-Relabel Optimization"],
+                "definitions": [
+                    {"term": "Residual Graph", "definition": "Graph representing remaining available capacity on edges and reverse flow cancellation opportunities."},
+                    {"term": "Minimum s-t Cut", "definition": "Partition of vertices into S and T separating s from t with minimal total forward edge capacity."}
+                ],
+                "formulas": [
+                    {"name": "Max-Flow Min-Cut Equality", "formula": "\\max |f| = \\min_{S, T} c(S, T)", "notes": "Maximum flow value equals minimum cut capacity in any network"},
+                    {"name": "Edmonds-Karp Complexity", "formula": "\\mathcal{O}(|V| \\cdot |E|^2)", "notes": "BFS augmenting path guarantees at most O(VE) augmentations"}
+                ],
+                "examples": [
+                    {"title": "Bipartite Maximum Matching Reduction", "description": "Construct source s and sink t with unit capacity edges to solve matching via max flow in O(VE)."}
+                ],
+                "diagrams": ["Residual Network Capacity and Flow Conservation", "Bipartite Graph to Flow Network Reduction"],
+                "emphasis": ["Dr. Marcus Brody emphasized: Always check flow conservation at every internal node and capacity constraints on forward edges."],
+                "additional": ["Circulation with demands and lower bounds reduction to standard max-flow."],
+                "tips": ["Be ready to formulate project selection and image segmentation as min-cut reductions."],
+                "unique": ["Section I worked through polynomial-time reductions for bipartite matching and baseball elimination problems."]
+            }
+        }
+
+        # Index any notes found in DB
+        db_notes_by_sec: Dict[str, Any] = {}
+        for r in vault_rows:
+            db_notes_by_sec[r["section"]] = r
 
         for sec in sec_names:
-            if sec == "A":
-                section_specific["Section A"] = [
-                    "Emphasis on randomized timer bounds (150ms-300ms) with uniform distribution proof",
-                    "Detailed 5-node cluster failure trace on whiteboard"
-                ]
-                professor_emphasis["Section A"] = [
-                    "Dr. Thorne emphasized: Never update commitIndex using prior terms directly (Figure 8)"
-                ]
-                exam_tips["Section A"] = [
-                    "Midterm Question 2 preview: Derive quorum size for N=7 and explain Figure 8 failure trace"
-                ]
-            elif sec == "B":
-                section_specific["Section B"] = [
-                    "Linear algebra geometric perspective: unnormalized attention logit covariance",
-                    "Softmax saturation threshold calculations"
-                ]
-                professor_emphasis["Section B"] = [
-                    "Prof. Vance emphasized: Dimension scaling factor preserves unit variance in high dimensions"
-                ]
-                exam_tips["Section B"] = [
-                    "Expect full mathematical derivation of Var(Q K^T) on Midterm 1"
-                ]
-            elif sec == "C":
-                section_specific["Section C"] = [
-                    "Fast log rollback optimization: skipping an entire term in a single RPC round-trip",
-                    "Log compaction with InstallSnapshot RPC"
-                ]
-                professor_emphasis["Section C"] = [
-                    "Dr. Thorne emphasized: Follower log truncation upon receiving conflicting leader entries"
-                ]
-                exam_tips["Section C"] = [
-                    "Focus on fast rollback pseudocode; likely to be a coding design question"
-                ]
-            elif sec == "D":
-                section_specific["Section D"] = [
-                    "Attention complexity tradeoffs compared to RNNs and CNNs",
-                    "Hardware memory bandwidth bottlenecks during inference"
-                ]
-                professor_emphasis["Section D"] = [
-                    "Prof. Vance emphasized: O(1) sequential operation advantage of self-attention"
-                ]
-                exam_tips["Section D"] = [
-                    "Memorize the comparative table of maximum path length and layer complexity"
-                ]
+            sec_key = f"Section {sec}"
+            curated = curated_section_data.get(sec, None)
+            
+            # 1. Base / curated fields
+            if curated:
+                topics_covered[sec_key] = list(curated["topics"])
+                definitions[sec_key] = list(curated["definitions"])
+                formulas[sec_key] = list(curated["formulas"])
+                examples[sec_key] = list(curated["examples"])
+                diagrams[sec_key] = list(curated["diagrams"])
+                professor_emphasis_dict[sec_key] = list(curated["emphasis"])
+                additional_lecture_explanations[sec_key] = list(curated["additional"])
+                exam_tips[sec_key] = list(curated["tips"])
+                section_specific[sec_key] = list(curated["topics"][:2]) + [f"Deep whiteboard focus on {curated['topics'][0]}"]
+                unique_insights[sec_key] = list(curated["unique"])
             else:
-                section_specific[f"Section {sec}"] = [
-                    f"Section {sec} specific whiteboard examples and practical exercises"
-                ]
-                professor_emphasis[f"Section {sec}"] = [
-                    f"Instructor highlighted core practical implementation invariants for Section {sec}"
-                ]
-                exam_tips[f"Section {sec}"] = [
-                    f"Review Section {sec} lecture homework assignments for exam preparation"
-                ]
+                topics_covered[sec_key] = [f"Foundational concepts for Section {sec}", f"Section {sec} core principles"]
+                definitions[sec_key] = [{"term": f"Section {sec} Core Term", "definition": f"Key concept taught by professor in Section {sec}"}]
+                formulas[sec_key] = [{"name": f"Section {sec} Formula", "formula": "F = m \\cdot a", "notes": "Fundamental relation"}]
+                examples[sec_key] = [{"title": f"Section {sec} Demonstration", "description": f"Worked example from Section {sec} lecture"}]
+                diagrams[sec_key] = [f"Section {sec} Blackboard Architectural Schematic"]
+                professor_emphasis_dict[sec_key] = [f"Instructor highlighted core practical implementation invariants for Section {sec}"]
+                additional_lecture_explanations[sec_key] = [f"Section {sec} specific whiteboard examples and practical exercises"]
+                exam_tips[sec_key] = [f"Review Section {sec} lecture homework assignments for exam preparation"]
+                section_specific[sec_key] = [f"Section {sec} specific whiteboard examples and practical exercises"]
+                unique_insights[sec_key] = [f"Section {sec} brings unique practical perspective to this chapter."]
+
+            # 2. Enrich from DB row if available
+            db_row = db_notes_by_sec.get(sec)
+            if db_row:
+                if db_row["key_definitions_json"]:
+                    try:
+                        parsed_defs = json.loads(db_row["key_definitions_json"])
+                        if isinstance(parsed_defs, list) and parsed_defs:
+                            # Normalize dicts
+                            clean_defs = []
+                            for d in parsed_defs:
+                                if isinstance(d, dict):
+                                    clean_defs.append({"term": str(d.get("term", "Term")), "definition": str(d.get("definition", ""))})
+                                elif isinstance(d, str):
+                                    clean_defs.append({"term": d, "definition": "Defined in lecture"})
+                            if clean_defs:
+                                definitions[sec_key] = clean_defs + definitions[sec_key]
+                    except Exception:
+                        pass
+                
+                if db_row["important_formulas_json"]:
+                    try:
+                        parsed_forms = json.loads(db_row["important_formulas_json"])
+                        if isinstance(parsed_forms, list) and parsed_forms:
+                            clean_forms = []
+                            for f in parsed_forms:
+                                if isinstance(f, dict):
+                                    clean_forms.append({
+                                        "name": str(f.get("name", "Formula")),
+                                        "formula": str(f.get("formula", "")),
+                                        "notes": str(f.get("notes", f.get("explanation", "")))
+                                    })
+                            if clean_forms:
+                                formulas[sec_key] = clean_forms + formulas[sec_key]
+                    except Exception:
+                        pass
+
+                if db_row["important_examples_json"]:
+                    try:
+                        parsed_ex = json.loads(db_row["important_examples_json"])
+                        if isinstance(parsed_ex, list) and parsed_ex:
+                            clean_ex = []
+                            for e in parsed_ex:
+                                if isinstance(e, dict):
+                                    clean_ex.append({
+                                        "title": str(e.get("title", e.get("name", "Lecture Example"))),
+                                        "description": str(e.get("description", e.get("explanation", "")))
+                                    })
+                            if clean_ex:
+                                examples[sec_key] = clean_ex + examples[sec_key]
+                    except Exception:
+                        pass
+
+                if db_row["diagram_summaries_json"]:
+                    try:
+                        parsed_diag = json.loads(db_row["diagram_summaries_json"])
+                        if isinstance(parsed_diag, list) and parsed_diag:
+                            clean_diag = [str(d.get("title", d)) if isinstance(d, dict) else str(d) for d in parsed_diag]
+                            diagrams[sec_key] = clean_diag + diagrams[sec_key]
+                    except Exception:
+                        pass
+
+        # Build common concepts and unique insights
+        common_concepts = [
+            "Fundamental theoretical theorems and correctness invariants across all sections",
+            "Universal exam-tested definitions and core mathematical properties",
+            "Syllabus-aligned foundation with complementary pedagogical angles"
+        ]
+
+        takeaways = [
+            f"Comparing {', '.join(['Section ' + s for s in sec_names])} provides a unified theoretical and applied mastery of {chapter}.",
+            "Pedagogical variations reflect deliberate emphasis differences by instructors (e.g. theory vs implementation) rather than inconsistencies.",
+            "Cross-section study reveals 100% agreement on core formulas and exam definitions."
+        ]
 
         return SectionComparisonResult(
             subject_name=subject_code,
@@ -3574,10 +5104,330 @@ By projecting with $W_i^Q, W_i^K, W_i^V$, each attention head operates in a dist
             compared_sections=sections,
             shared_core_concepts=shared_concepts,
             section_specific_explanations=section_specific,
-            professor_emphasis_differences=professor_emphasis,
+            professor_emphasis_differences=professor_emphasis_dict,
             exam_tips_by_section=exam_tips,
-            cross_section_takeaways=[
-                "Combining Section A and Section C notes gives the complete theoretical and implementation picture of consensus.",
-                "Cross-section review reveals 100% agreement on core exam questions regarding Figure 8 and Quorum math.",
-            ],
+            cross_section_takeaways=takeaways,
+            topics_covered=topics_covered,
+            definitions=definitions,
+            formulas=formulas,
+            examples=examples,
+            diagrams=diagrams,
+            professor_emphasis=professor_emphasis_dict,
+            additional_lecture_explanations=additional_lecture_explanations,
+            common_concepts=common_concepts,
+            unique_insights=unique_insights,
         )
+
+    # -------------------------------------------------------------------------
+    # NotebookLM-Style Grounded Chat Conversation Management
+    # -------------------------------------------------------------------------
+    def _ensure_default_chat_conversation(self) -> None:
+        cursor = self._conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM lectra_chat_conversations WHERE user_id = 'usr_lectra_default'")
+        if cursor.fetchone()[0] == 0:
+            conv_id = "conv_default_cs244"
+            now = "2026-10-24T10:00:00Z"
+            # Link to existing default master note and sources
+            default_note = self.get_master_note("lec_raft_consensus_01")
+            sources = self.get_sources_for_lecture("lec_raft_consensus_01")
+            source_ids = [s.id for s in sources] if sources else ["src_demo_raft_board"]
+            
+            cursor.execute(
+                """
+                INSERT INTO lectra_chat_conversations (
+                    id, user_id, title, workspace_id, subject_code, chapter, lecture_id, selected_source_ids_json, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    conv_id,
+                    "usr_lectra_default",
+                    "Raft Consensus & Invariant Verification",
+                    "ws_main",
+                    "CS-244",
+                    "Chapter 4: Consensus in Fault-Tolerant Clusters",
+                    "lec_raft_consensus_01",
+                    json.dumps(source_ids),
+                    now,
+                    now,
+                ),
+            )
+
+            # Add initial welcome / grounded assistant response
+            msg1_id = "cmsg_init_01"
+            cursor.execute(
+                """
+                INSERT INTO lectra_chat_messages (
+                    id, conversation_id, user_id, role, content, citations_json, suggested_questions_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    msg1_id,
+                    conv_id,
+                    "usr_lectra_default",
+                    "assistant",
+                    "Hello! I am your **LECTRA Academic AI Assistant**, grounded in your uploaded whiteboard photos, professor slides, and official reference documents.\n\nI have loaded your sources for **CS-244 (Chapter 4: Consensus in Fault-Tolerant Clusters)**. How can I help you study today?",
+                    json.dumps([
+                        {
+                            "source_name": "Ongaro_Raft_Paper_Official.pdf",
+                            "source_type": "Official Reference PDF",
+                            "page_or_region": "Section 5.2, Page 4",
+                            "quote": "Leader election in Raft begins when a follower's randomized timer expires without heartbeat."
+                        },
+                        {
+                            "source_name": "Classroom_Whiteboard_Raft.jpg",
+                            "source_type": "Whiteboard OCR",
+                            "page_or_region": "Center Board",
+                            "quote": "Strict Quorum Theorem: Q = floor(N / 2) + 1. Never commit without majority quorum."
+                        }
+                    ]),
+                    json.dumps([
+                        "Explain the Raft quorum formula step by step",
+                        "What did Professor Thorne emphasize on the whiteboard?",
+                        "Summarize the election safety invariant",
+                        "Generate 3 practice exam questions from this chapter"
+                    ]),
+                    now,
+                ),
+            )
+            self._conn.commit()
+
+    def create_chat_conversation(
+        self,
+        user_id: str,
+        title: str = "Untitled Notebook Chat",
+        workspace_id: Optional[str] = None,
+        subject_code: Optional[str] = None,
+        chapter: Optional[str] = None,
+        lecture_id: Optional[str] = None,
+        selected_source_ids: Optional[List[str]] = None,
+    ) -> ChatConversation:
+        conv_id = f"conv_{uuid4().hex[:10]}"
+        now = "2026-10-24T12:00:00Z"
+        source_ids = selected_source_ids or []
+        cursor = self._conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO lectra_chat_conversations (
+                id, user_id, title, workspace_id, subject_code, chapter, lecture_id, selected_source_ids_json, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                conv_id,
+                user_id,
+                title,
+                workspace_id,
+                subject_code,
+                chapter,
+                lecture_id,
+                json.dumps(source_ids),
+                now,
+                now,
+            ),
+        )
+        self._conn.commit()
+        return ChatConversation(
+            id=conv_id,
+            user_id=user_id,
+            title=title,
+            workspace_id=workspace_id,
+            subject_code=subject_code,
+            chapter=chapter,
+            lecture_id=lecture_id,
+            selected_source_ids=source_ids,
+            messages=[],
+            created_at=now,
+            updated_at=now,
+        )
+
+    def list_chat_conversations(self, user_id: str) -> List[ChatConversation]:
+        cursor = self._conn.cursor()
+        cursor.execute(
+            """
+            SELECT id, user_id, title, workspace_id, subject_code, chapter, lecture_id, selected_source_ids_json, created_at, updated_at
+            FROM lectra_chat_conversations
+            WHERE user_id = ?
+            ORDER BY updated_at DESC
+            """,
+            (user_id,),
+        )
+        rows = cursor.fetchall()
+        result = []
+        for r in rows:
+            sources = []
+            if r["selected_source_ids_json"]:
+                try:
+                    sources = json.loads(r["selected_source_ids_json"])
+                except Exception:
+                    sources = []
+            result.append(
+                ChatConversation(
+                    id=r["id"],
+                    user_id=r["user_id"],
+                    title=r["title"],
+                    workspace_id=r["workspace_id"],
+                    subject_code=r["subject_code"],
+                    chapter=r["chapter"],
+                    lecture_id=r["lecture_id"],
+                    selected_source_ids=sources,
+                    messages=[],
+                    created_at=r["created_at"],
+                    updated_at=r["updated_at"],
+                )
+            )
+        return result
+
+    def get_chat_conversation(self, conversation_id: str, user_id: str) -> Optional[ChatConversation]:
+        cursor = self._conn.cursor()
+        cursor.execute(
+            """
+            SELECT id, user_id, title, workspace_id, subject_code, chapter, lecture_id, selected_source_ids_json, created_at, updated_at
+            FROM lectra_chat_conversations
+            WHERE id = ? AND user_id = ?
+            """,
+            (conversation_id, user_id),
+        )
+        r = cursor.fetchone()
+        if not r:
+            return None
+        sources = []
+        if r["selected_source_ids_json"]:
+            try:
+                sources = json.loads(r["selected_source_ids_json"])
+            except Exception:
+                sources = []
+
+        # Fetch messages
+        cursor.execute(
+            """
+            SELECT id, conversation_id, user_id, role, content, citations_json, suggested_questions_json, created_at
+            FROM lectra_chat_messages
+            WHERE conversation_id = ?
+            ORDER BY created_at ASC
+            """,
+            (conversation_id,),
+        )
+        msg_rows = cursor.fetchall()
+        messages = []
+        for m in msg_rows:
+            cits = []
+            if m["citations_json"]:
+                try:
+                    cits = json.loads(m["citations_json"])
+                except Exception:
+                    cits = []
+            suggs = []
+            if m["suggested_questions_json"]:
+                try:
+                    suggs = json.loads(m["suggested_questions_json"])
+                except Exception:
+                    suggs = []
+            messages.append(
+                ChatMessage(
+                    id=m["id"],
+                    conversation_id=m["conversation_id"],
+                    user_id=m["user_id"],
+                    role=m["role"],
+                    content=m["content"],
+                    citations=cits,
+                    suggested_questions=suggs,
+                    created_at=m["created_at"],
+                )
+            )
+
+        return ChatConversation(
+            id=r["id"],
+            user_id=r["user_id"],
+            title=r["title"],
+            workspace_id=r["workspace_id"],
+            subject_code=r["subject_code"],
+            chapter=r["chapter"],
+            lecture_id=r["lecture_id"],
+            selected_source_ids=sources,
+            messages=messages,
+            created_at=r["created_at"],
+            updated_at=r["updated_at"],
+        )
+
+    def update_chat_conversation(
+        self,
+        conversation_id: str,
+        user_id: str,
+        title: Optional[str] = None,
+        selected_source_ids: Optional[List[str]] = None,
+    ) -> Optional[ChatConversation]:
+        conv = self.get_chat_conversation(conversation_id, user_id)
+        if not conv:
+            return None
+        new_title = title if title is not None else conv.title
+        new_sources = selected_source_ids if selected_source_ids is not None else conv.selected_source_ids
+        now = "2026-10-24T12:00:00Z"
+        cursor = self._conn.cursor()
+        cursor.execute(
+            """
+            UPDATE lectra_chat_conversations
+            SET title = ?, selected_source_ids_json = ?, updated_at = ?
+            WHERE id = ? AND user_id = ?
+            """,
+            (new_title, json.dumps(new_sources), now, conversation_id, user_id),
+        )
+        self._conn.commit()
+        return self.get_chat_conversation(conversation_id, user_id)
+
+    def delete_chat_conversation(self, conversation_id: str, user_id: str) -> bool:
+        cursor = self._conn.cursor()
+        cursor.execute(
+            "DELETE FROM lectra_chat_conversations WHERE id = ? AND user_id = ?",
+            (conversation_id, user_id),
+        )
+        deleted = cursor.rowcount > 0
+        self._conn.commit()
+        return deleted
+
+    def add_chat_message(
+        self,
+        conversation_id: str,
+        user_id: str,
+        role: str,
+        content: str,
+        citations: Optional[List[Dict[str, Any]]] = None,
+        suggested_questions: Optional[List[str]] = None,
+    ) -> ChatMessage:
+        msg_id = f"cmsg_{uuid4().hex[:10]}"
+        now = "2026-10-24T12:00:00Z"
+        cits = citations or []
+        suggs = suggested_questions or []
+        cursor = self._conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO lectra_chat_messages (
+                id, conversation_id, user_id, role, content, citations_json, suggested_questions_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                msg_id,
+                conversation_id,
+                user_id,
+                role,
+                content,
+                json.dumps(cits),
+                json.dumps(suggs),
+                now,
+            ),
+        )
+        cursor.execute(
+            "UPDATE lectra_chat_conversations SET updated_at = ? WHERE id = ?",
+            (now, conversation_id),
+        )
+        self._conn.commit()
+        return ChatMessage(
+            id=msg_id,
+            conversation_id=conversation_id,
+            user_id=user_id,
+            role=role,
+            content=content,
+            citations=cits,
+            suggested_questions=suggs,
+            created_at=now,
+        )
+
+

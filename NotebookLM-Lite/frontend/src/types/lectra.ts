@@ -2,6 +2,8 @@ export type SectionId = 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'I';
 
 export type VerificationStatus = 'unverified' | 'community_reviewed' | 'source_verified';
 
+export type SharingScope = 'private' | 'course' | 'selected_sections' | 'all_sections';
+
 export type SourceMaterialType =
     | 'whiteboard'
     | 'blackboard'
@@ -299,6 +301,12 @@ export interface MasterNoteContent {
     raw_board_transcription: string;
     ai_synthesized_markdown: string;
     user_markdown_override?: string;
+    created_at?: string;
+    visibility?: VisibilityType;
+    version?: number;
+    status?: string;
+    user_id?: string;
+    workspace_id?: string;
     updated_at: string;
 }
 
@@ -307,19 +315,99 @@ export interface MCQQuestion {
     question: string;
     options: string[];
     correct_option_index: number;
+    correct_answer?: string;
     explanation: string;
     difficulty: 'easy' | 'medium' | 'hard';
     topic_reference: string;
+    source_reference?: string;
 }
 
 export interface FlashcardItem {
     id: string;
     question: string;
     answer: string;
+    front?: string;
+    back?: string;
     explanation?: string;
     difficulty: string;
     review_status: 'new' | 'needs_review' | 'mastered';
     topic_tag: string;
+}
+
+export interface PracticeQuestionItem {
+    id: string;
+    study_kit_id?: string;
+    question: string;
+    question_type: 'short_answer' | 'long_answer' | 'conceptual' | 'application' | 'formula';
+    difficulty: 'easy' | 'medium' | 'hard';
+    topic: string;
+    model_answer: string;
+    rubric_explanation: string;
+    source_reference: string;
+    key_points?: string[];
+}
+
+export interface PracticeEvaluationResponse {
+    question_id: string;
+    score: number;
+    feedback: string;
+    strengths: string[];
+    missing_key_points: string[];
+    missed_points?: string[];
+    is_ai_generated: boolean;
+    disclaimer: string;
+}
+
+export interface QuizAttempt {
+    id: string;
+    study_kit_id: string;
+    lecture_id: string;
+    user_id: string;
+    score: number;
+    total: number;
+    percentage: number;
+    passed: boolean;
+    time_taken_seconds: number;
+    answers: Record<string, number>;
+    topic_performance: Record<string, { correct: number; total: number }>;
+    detailed_breakdown: any[];
+    created_at: string;
+    attempted_at?: string;
+}
+
+export interface StudentKitProgress {
+    kit_id: string;
+    user_id: string;
+    cards_mastered: number;
+    cards_needs_review: number;
+    total_cards: number;
+    flashcard_progress_pct: number;
+    quizzes_taken: number;
+    best_quiz_score?: number | null;
+    last_quiz_score?: number | null;
+    last_practiced_at: string;
+}
+
+export interface ExamPriorityTopic {
+    topic: string;
+    priority_level: 'Critical' | 'High' | 'Medium';
+    category: 'lecture_emphasis' | 'cross_section_recurring' | 'formula_derivation' | 'professor_reference';
+    source_evidence: string;
+    evidence?: string;
+    frequency_score: number;
+    recurring_count?: number;
+    is_lecturer_stated: boolean;
+    reasoning: string;
+}
+
+export interface ExamPriorityAnalysis {
+    lecture_emphasis_topics: ExamPriorityTopic[];
+    cross_section_recurring_topics: ExamPriorityTopic[];
+    emphasized_in_lecture?: ExamPriorityTopic[];
+    recurring_across_sections?: ExamPriorityTopic[];
+    critical_formulas: Array<{ name?: string; formula: string; weight: string; description?: string }>;
+    professor_reference_concepts: Array<string | { concept: string; reference: string; importance: string }>;
+    disclaimer: string;
 }
 
 export interface ExamRevisionSheet {
@@ -331,19 +419,32 @@ export interface ExamRevisionSheet {
 
 export interface StudyKit {
     id: string;
+    master_notes_id?: string;
     lecture_id: string;
+    user_id?: string;
     title: string;
     subject_name: string;
+    subject_code?: string;
     chapter: string;
+    professor?: string;
+    kit_type?: string;
     key_takeaways: string[];
     mcqs: MCQQuestion[];
     flashcards: FlashcardItem[];
+    practice_questions?: PracticeQuestionItem[];
     revision_sheet: ExamRevisionSheet;
+    one_page_summary?: string;
+    detailed_summary?: string;
+    last_minute_summary?: string;
+    exam_priority_analysis?: ExamPriorityAnalysis;
+    progress?: StudentKitProgress;
     created_at: string;
+    updated_at?: string;
 }
 
 export interface SectionVaultNote {
     id: string;
+    master_notes_id?: string;
     lecture_id: string;
     title: string;
     chapter: string;
@@ -357,12 +458,20 @@ export interface SectionVaultNote {
     contributor_id: string;
     contributor_name: string;
     contributor_avatar?: string;
+    visibility?: VisibilityType;
+    sharing_scope?: SharingScope;
+    allowed_sections?: SectionId[];
+    enrolled_course?: string;
+    explicit_permission_granted?: boolean;
     verification_status: VerificationStatus;
+    official_source_reference?: string;
+    sources_count: number;
     upvotes: number;
     reports_count: number;
     summary: string;
     download_available: boolean;
     tags: string[];
+    upload_date?: string;
     created_at: string;
 }
 
@@ -375,6 +484,15 @@ export interface SectionComparisonResult {
     professor_emphasis_differences: Record<string, string[]>;
     exam_tips_by_section: Record<string, string[]>;
     cross_section_takeaways: string[];
+    topics_covered?: Record<string, string[]>;
+    definitions?: Record<string, Array<{ term: string; definition: string }>>;
+    formulas?: Record<string, Array<{ name: string; formula: string; notes?: string }>>;
+    examples?: Record<string, Array<{ title: string; description: string }>>;
+    diagrams?: Record<string, string[]>;
+    professor_emphasis?: Record<string, string[]>;
+    additional_lecture_explanations?: Record<string, string[]>;
+    common_concepts?: string[];
+    unique_insights?: Record<string, string[]>;
 }
 
 export interface CommunityReview {
@@ -387,7 +505,62 @@ export interface CommunityReview {
     comment: string;
     is_inaccuracy_report?: boolean;
     inaccuracy_details?: string;
+    verified_against_official_source?: boolean;
+    official_source_citation?: string;
+    replies?: Array<{
+        id: string;
+        user_id: string;
+        user_name: string;
+        user_section: string;
+        comment: string;
+        created_at: string;
+    }>;
     created_at: string;
+}
+
+export interface DuplicateCheckRequest {
+    subject_code: string;
+    chapter: string;
+    section: SectionId;
+    professor?: string;
+    lecture_date?: string;
+    summary?: string;
+}
+
+export interface DuplicateCheckResult {
+    is_potential_duplicate: boolean;
+    confidence_score: number;
+    duplicate_vault_note_id?: string;
+    duplicate_title?: string;
+    matching_reasons: string[];
+    warning_message?: string;
+}
+
+export interface ContributionHistoryItem {
+    id: string;
+    user_id: string;
+    user_name: string;
+    section: SectionId;
+    action: string;
+    target_id: string;
+    target_title: string;
+    subject_code?: string;
+    chapter?: string;
+    details?: string;
+    created_at: string;
+}
+
+export interface ContributorProfile {
+    user_id: string;
+    full_name: string;
+    section: SectionId;
+    avatar_url?: string;
+    reputation_score: number;
+    total_contributions: number;
+    verified_contributions: number;
+    total_upvotes_received: number;
+    badges: string[];
+    bio?: string;
 }
 
 export interface NotificationItem {
@@ -426,3 +599,50 @@ export interface DashboardMetrics {
     total_flashcards?: number;
     total_quiz_questions?: number;
 }
+
+export interface ChatMessage {
+    id: string;
+    conversation_id: string;
+    user_id: string;
+    role: 'user' | 'assistant' | 'system';
+    content: string;
+    citations: Array<{
+        source_name: string;
+        source_type: string;
+        page_or_region: string;
+        quote: string;
+    }>;
+    suggested_questions: string[];
+    created_at: string;
+}
+
+export interface ChatConversation {
+    id: string;
+    user_id: string;
+    title: string;
+    workspace_id?: string;
+    subject_code?: string;
+    chapter?: string;
+    lecture_id?: string;
+    selected_source_ids: string[];
+    messages: ChatMessage[];
+    created_at: string;
+    updated_at: string;
+}
+
+export interface CreateConversationRequest {
+    title?: string;
+    workspace_id?: string;
+    subject_code?: string;
+    chapter?: string;
+    lecture_id?: string;
+    selected_source_ids?: string[];
+    initial_message?: string;
+}
+
+export interface SendChatMessageResponse {
+    user_message: ChatMessage;
+    assistant_message: ChatMessage;
+    conversation: ChatConversation;
+}
+

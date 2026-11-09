@@ -3,7 +3,7 @@ Podcast Domain Models
 
 Core data structures for podcast generation with structured output support.
 """
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from typing import List, Literal, Optional
 from enum import Enum
 
@@ -62,13 +62,14 @@ class DialogueTurn(BaseModel):
         description="对话内容，应该自然流畅，不超过200字"
     )
     
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "speaker": "主持人",
                 "text": "大家好，欢迎收听今天的节目！今天我们邀请到了一位重量级嘉宾。"
             }
         }
+    )
 
 
 class PodcastScript(BaseModel):
@@ -131,8 +132,8 @@ class PodcastScript(BaseModel):
         
         return "\n".join(lines)
     
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "title": "AI技术前沿探讨",
                 "host_name": "小明",
@@ -145,6 +146,7 @@ class PodcastScript(BaseModel):
                 "estimated_duration_minutes": 5.0
             }
         }
+    )
 
 
 class PodcastExtension(BaseModel):

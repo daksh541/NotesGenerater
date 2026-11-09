@@ -39,8 +39,10 @@ class ImagePreprocessor:
         small_gray = gray.resize((small_w, small_h))
         small_edges = edges.resize((small_w, small_h))
 
-        gray_pixels = list(small_gray.getdata())
-        edge_pixels = list(small_edges.getdata())
+        get_pixels = getattr(small_gray, "get_flattened_data", small_gray.getdata)
+        gray_pixels = list(get_pixels())
+        get_edge_pixels = getattr(small_edges, "get_flattened_data", small_edges.getdata)
+        edge_pixels = list(get_edge_pixels())
 
         mean_lum = sum(gray_pixels) / max(len(gray_pixels), 1)
         is_whiteboard = mean_lum >= 110

@@ -369,3 +369,69 @@ def test_phase3_end_to_end_9_step_workflow():
     md_export = client.get(f"/api/lectra/export/markdown/{lecture_id}")
     assert md_export.status_code == 200
     assert "Chapter 4" in md_export.text
+
+
+def test_lectra_notebook_chat_lifecycle():
+    """Validates the NotebookLM-inspired AI chatbot persistence, citation grounding, and conversation management."""
+    # 1. List conversations (should include default or existing)
+    list_res = client.get("/api/lectra/chat/conversations")
+    assert list_res.status_code == 200
+    convs = list_res.json()
+    assert isinstance(convs, list)
+    assert len(convs) >= 1
+
+    # 2. Create a new notebook chat conversation
+    create_res = client.post(
+        "/api/lectra/chat/conversations",
+        json={
+            "title": "CS-244: Quorum Consensus Discussion",
+            "subject_code": "CS-244",
+            "lecture_id": "lec_consensus_01",
+            "selected_source_ids": ["src_whiteboard_01", "src_paper_01"],
+        },
+    )
+    assert create_res.status_code == 200
+    new_conv = create_res.json()
+    conv_id = new_conv["id"]
+    assert new_conv["title"] == "CS-244: Quorum Consensus Discussion"
+    assert new_conv["subject_code"] == "CS-244"
+    assert "src_whiteboard_01" in new_conv["selected_source_ids"]
+
+    # 3. Get single conversation
+    get_res = client.get(f"/api/lectra/chat/conversations/{conv_id}")
+    assert get_res.status_code == 200
+    assert get_res.json()["id"] == conv_id
+
+    # 4. Send a message to get grounded answer with citations & follow-ups
+    msg_res = client.post(
+        f"/api/lectra/chat/conversations/{conv_id}/messages",
+        json={
+            "message": "Explain the safety invariant and quorum formula from the whiteboard.",
+            "selected_source_ids": ["src_whiteboard_01"],
+            "lecture_id": "lec_consensus_01",
+        },
+    )
+    assert msg_res.status_code == 200
+    msg_data = msg_res.json()
+    assert msg_data["conversation_id"] == conv_id
+    user_msg = msg_data["user_message"]
+    ai_msg = msg_data["assistant_message"]
+    assert user_msg["role"] == "user"
+    assert ai_msg["role"] == "assistant"
+    assert len(ai_msg["content"]) > 10
+    assert len(ai_msg["citations"]) >= 1
+    assert len(ai_msg["suggested_questions"]) >= 1
+
+    # 5. Rename / update conversation
+    update_res = client.put(
+        f"/api/lectra/chat/conversations/{conv_id}",
+        json={"title": "CS-244: Quorum Consensus (Exam Prep)"},
+    )
+    assert update_res.status_code == 200
+    assert update_res.json()["title"] == "CS-244: Quorum Consensus (Exam Prep)"
+
+    # 6. Delete conversation
+    del_res = client.delete(f"/api/lectra/chat/conversations/{conv_id}")
+    assert del_res.status_code == 200
+    assert del_res.json()["deleted"] is True
+

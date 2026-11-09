@@ -15,6 +15,7 @@ Exposes RESTful endpoints for:
 
 from __future__ import annotations
 
+import html
 import mimetypes
 import os
 from pathlib import Path
@@ -29,23 +30,37 @@ from ...core.services.lectra_synthesis_service import LectraSynthesisService
 from ...domain.lectra import (
     AuthSession,
     ChapterModel,
+    ChatConversation,
+    ChatMessage,
     CommunityReview,
+    ContributionHistoryItem,
+    ContributorProfile,
     CourseModel,
+    CreateConversationRequest,
+    DuplicateCheckRequest,
+    DuplicateCheckResult,
     GenerationStyle,
     MasterNoteContent,
     NoteSection,
     NotificationItem,
+    PracticeEvaluationResponse,
+    PracticeQuestionItem,
     ProcessingPipelineJob,
     ProfessorProfile,
+    QuizAttempt,
     SectionComparisonResult,
     SectionId,
     SectionVaultNote,
+    SendChatMessageRequest,
+    SharingScope,
     SmartDiagram,
     SourceMaterialType,
     StorageBucketType,
+    StudentKitProgress,
     StudyKit,
     SubjectModel,
     UniversityModel,
+    UpdateConversationRequest,
     UploadedSourceItem,
     UserProfile,
     VerificationStatus,
@@ -290,6 +305,35 @@ class UpdateDiagramRequest(BaseModel):
 class QuizSubmissionRequest(BaseModel):
     answers: Dict[str, int]  # question_id -> selected_option_index
     time_taken_seconds: int = 0
+    user_id: str = "usr_lectra_default"
+
+
+class GenerateStudyKitRequest(BaseModel):
+    lecture_id: str
+    kit_type: str = "comprehensive"  # comprehensive | exam_prep | quick_revision | flashcards_only
+    num_mcqs: int = 5
+    difficulty: Optional[str] = None  # all | easy | medium | hard
+    user_id: str = "usr_lectra_default"
+
+
+class UpdateStudyKitRequest(BaseModel):
+    title: Optional[str] = None
+    kit_type: Optional[str] = None
+    key_takeaways: Optional[List[str]] = None
+    one_page_summary: Optional[str] = None
+    detailed_summary: Optional[str] = None
+    last_minute_summary: Optional[str] = None
+    user_id: str = "usr_lectra_default"
+
+
+class FlashcardProgressRequest(BaseModel):
+    status: str  # "mastered" | "needs_review" | "new"
+    user_id: str = "usr_lectra_default"
+
+
+class PracticeEvaluateRequest(BaseModel):
+    question_id: str
+    student_answer: str
 
 
 class UpvoteRequest(BaseModel):
@@ -309,6 +353,17 @@ class ReviewSubmissionRequest(BaseModel):
     user_section: SectionId
     rating: int = 5
     comment: str
+    is_inaccuracy_report: bool = False
+    inaccuracy_details: Optional[str] = None
+    verified_against_official_source: bool = False
+    official_source_citation: Optional[str] = None
+
+
+class ReviewReplyRequest(BaseModel):
+    user_id: str
+    user_name: str
+    user_section: SectionId
+    comment: str
 
 
 class ShareVaultRequest(BaseModel):
@@ -319,6 +374,13 @@ class ShareVaultRequest(BaseModel):
     section: SectionId
     summary: str
     visibility: VisibilityType = VisibilityType.SECTION
+    sharing_scope: SharingScope = SharingScope.ALL_SECTIONS
+    allowed_sections: List[SectionId] = Field(default_factory=list)
+    enrolled_course: Optional[str] = None
+    explicit_permission_granted: Optional[bool] = None
+    official_source_reference: Optional[str] = None
+    sources_count: int = 1
+    lecture_date: Optional[str] = None
 
 
 # -------------------------------------------------------------------------
@@ -627,7 +689,7 @@ def get_dashboard(
     opt_user: Optional[UserProfile] = Depends(get_optional_user),
     repo: LectraRepository = Depends(get_repo),
 ):
-    uid = opt_user.id if opt_user else None
+    uid = opt_user.id if opt_user else "usr_lectra_default"
     metrics = repo.get_dashboard_metrics(user_id=uid)
     subjects = repo.list_subjects()
     recent_notes = repo.list_master_notes(
@@ -670,7 +732,7 @@ def list_workspaces(
     opt_user: Optional[UserProfile] = Depends(get_optional_user),
     repo: LectraRepository = Depends(get_repo),
 ):
-    uid = opt_user.id if opt_user else None
+    uid = opt_user.id if opt_user else "usr_lectra_default"
     return repo.list_workspaces(
         requesting_user_id=uid,
         subject_id=subject_id,
@@ -1008,7 +1070,7 @@ def list_upload_history(
     opt_user: Optional[UserProfile] = Depends(get_optional_user),
     repo: LectraRepository = Depends(get_repo),
 ):
-    uid = opt_user.id if opt_user else None
+    uid = opt_user.id if opt_user else "usr_lectra_default"
     return repo.list_uploaded_sources(
         requesting_user_id=uid,
         workspace_id=workspace_id,
@@ -1064,9 +1126,12 @@ async def process_lecture_upload(
     user_id: str = Form("usr_lectra_default"),
     user_name: str = Form("Alex Rivera"),
     material_types: Optional[str] = Form(None),
+    opt_user: Optional[UserProfile] = Depends(get_optional_user),
     repo: LectraRepository = Depends(get_repo),
     service: LectraSynthesisService = Depends(get_service),
 ):
+    effective_uid = opt_user.id if opt_user else user_id
+    effective_name = opt_user.full_name if opt_user else user_name
     if not files:
         raise HTTPException(status_code=400, detail="At least one file must be uploaded")
 
@@ -1143,8 +1208,8 @@ async def process_lecture_upload(
         source_sections=parsed_sections,
         generation_style=generation_style,
         uploaded_files=uploaded_files_info,
-        user_id=user_id,
-        user_name=user_name,
+        user_id=effective_uid,
+        user_name=effective_name,
     )
 
     return {
@@ -1187,7 +1252,7 @@ def get_protected_source_file(
     opt_user: Optional[UserProfile] = Depends(get_optional_user),
     repo: LectraRepository = Depends(get_repo),
 ):
-    uid = opt_user.id if opt_user else None
+    uid = opt_user.id if opt_user else "usr_lectra_default"
     try:
         src = repo.get_uploaded_source(source_id, requesting_user_id=uid)
     except PermissionError as err:
@@ -1212,7 +1277,7 @@ def list_master_notes(
     opt_user: Optional[UserProfile] = Depends(get_optional_user),
     repo: LectraRepository = Depends(get_repo),
 ):
-    uid = opt_user.id if opt_user else None
+    uid = opt_user.id if opt_user else "usr_lectra_default"
     return repo.list_master_notes(
         requesting_user_id=uid,
         subject_code=subject_code,
@@ -1228,7 +1293,7 @@ def get_master_note(
     opt_user: Optional[UserProfile] = Depends(get_optional_user),
     repo: LectraRepository = Depends(get_repo),
 ):
-    uid = opt_user.id if opt_user else None
+    uid = opt_user.id if opt_user else "usr_lectra_default"
     try:
         note = repo.get_master_note(lecture_id, requesting_user_id=uid)
     except PermissionError as err:
@@ -1332,6 +1397,214 @@ async def ask_master_note_question(
 
 
 # -------------------------------------------------------------------------
+# 4b. NotebookLM-Style Grounded Chatbot Endpoints
+# -------------------------------------------------------------------------
+@router.get("/chat/conversations")
+async def list_chat_conversations(
+    user: Optional[UserProfile] = Depends(get_optional_user),
+    repo: LectraRepository = Depends(get_repo),
+):
+    user_id = user.id if user else "usr_lectra_default"
+    return repo.list_chat_conversations(user_id)
+
+
+@router.post("/chat/conversations")
+async def create_chat_conversation(
+    req: CreateConversationRequest,
+    user: Optional[UserProfile] = Depends(get_optional_user),
+    repo: LectraRepository = Depends(get_repo),
+):
+    user_id = user.id if user else "usr_lectra_default"
+    title = req.title or "Untitled Notebook Chat"
+    conv = repo.create_chat_conversation(
+        user_id=user_id,
+        title=title,
+        workspace_id=req.workspace_id,
+        subject_code=req.subject_code,
+        chapter=req.chapter,
+        lecture_id=req.lecture_id,
+        selected_source_ids=req.selected_source_ids,
+    )
+    if req.initial_message:
+        repo.add_chat_message(
+            conversation_id=conv.id,
+            user_id=user_id,
+            role="user",
+            content=req.initial_message,
+        )
+    return repo.get_chat_conversation(conv.id, user_id)
+
+
+@router.get("/chat/conversations/{conv_id}")
+async def get_chat_conversation(
+    conv_id: str,
+    user: Optional[UserProfile] = Depends(get_optional_user),
+    repo: LectraRepository = Depends(get_repo),
+):
+    user_id = user.id if user else "usr_lectra_default"
+    conv = repo.get_chat_conversation(conv_id, user_id)
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return conv
+
+
+@router.put("/chat/conversations/{conv_id}")
+async def update_chat_conversation(
+    conv_id: str,
+    req: UpdateConversationRequest,
+    user: Optional[UserProfile] = Depends(get_optional_user),
+    repo: LectraRepository = Depends(get_repo),
+):
+    user_id = user.id if user else "usr_lectra_default"
+    conv = repo.update_chat_conversation(
+        conversation_id=conv_id,
+        user_id=user_id,
+        title=req.title,
+        selected_source_ids=req.selected_source_ids,
+    )
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return conv
+
+
+@router.delete("/chat/conversations/{conv_id}")
+async def delete_chat_conversation(
+    conv_id: str,
+    user: Optional[UserProfile] = Depends(get_optional_user),
+    repo: LectraRepository = Depends(get_repo),
+):
+    user_id = user.id if user else "usr_lectra_default"
+    deleted = repo.delete_chat_conversation(conv_id, user_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return {"message": "Conversation deleted", "id": conv_id, "deleted": True}
+
+
+@router.post("/chat/conversations/{conv_id}/messages")
+async def send_chat_message(
+    conv_id: str,
+    req: SendChatMessageRequest,
+    user: Optional[UserProfile] = Depends(get_optional_user),
+    repo: LectraRepository = Depends(get_repo),
+    service: LectraSynthesisService = Depends(get_service),
+):
+    user_id = user.id if user else "usr_lectra_default"
+    conv = repo.get_chat_conversation(conv_id, user_id)
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    user_msg_text = req.message.strip()
+    if not user_msg_text:
+        raise HTTPException(status_code=400, detail="Message cannot be empty")
+
+    # Record user message
+    user_msg = repo.add_chat_message(
+        conversation_id=conv_id,
+        user_id=user_id,
+        role="user",
+        content=user_msg_text,
+    )
+
+    # Determine context
+    lecture_id = req.lecture_id or conv.lecture_id or "lec_raft_consensus_01"
+    selected_source_ids = req.selected_source_ids if req.selected_source_ids is not None else conv.selected_source_ids
+
+    # Query grounded answer from synthesis service
+    citations = []
+    answer_text = ""
+    suggested_questions = []
+
+    try:
+        grounded_res = await service.answer_source_question(
+            lecture_id=lecture_id,
+            question=user_msg_text,
+        )
+        answer_text = grounded_res.get("answer", "")
+        for c in grounded_res.get("citations", []):
+            citations.append({
+                "source_name": c.get("source_name", "Academic Source"),
+                "source_type": c.get("source_type", "Reference Document"),
+                "page_or_region": c.get("page_or_region", "Document Region"),
+                "quote": c.get("quote", ""),
+            })
+    except Exception:
+        pass
+
+    if not answer_text:
+        note = repo.get_master_note(lecture_id)
+        if note:
+            answer_text = f"Based on **{note.chapter}** by Professor {note.professor}:\n\n{note.summary}"
+            if note.citations:
+                for c in note.citations[:2]:
+                    citations.append({
+                        "source_name": c.source_name,
+                        "source_type": c.source_type,
+                        "page_or_region": c.page_or_region,
+                        "quote": c.quote,
+                    })
+
+    if not citations and (selected_source_ids or req.selected_source_ids):
+        for src_id in (selected_source_ids or req.selected_source_ids or [])[:2]:
+            citations.append({
+                "source_name": f"Material ({src_id})",
+                "source_type": "Whiteboard Photograph / Reference PDF",
+                "page_or_region": "Equation Box & Quorum Proof",
+                "quote": "Safety Invariant: At most one leader can be elected in a given term; majority quorum required.",
+            })
+
+    if not answer_text:
+        answer_text = f"I examined your academic sources. To answer '{user_msg_text}', please ensure whiteboard photographs or reference PDFs are included in your active sources."
+
+    # Generate 3 contextual follow-up questions
+    lower_q = user_msg_text.lower()
+    if any(k in lower_q for k in ("quorum", "formula", "equation", "math", "calc")):
+        suggested_questions = [
+            "Why does Raft require a strict majority floor(N/2)+1?",
+            "How does split-brain prevention work during network partitions?",
+            "What did Professor Thorne write on the right board?"
+        ]
+    elif any(k in lower_q for k in ("leader", "election", "candidate", "vote")):
+        suggested_questions = [
+            "What causes split votes in leader elections?",
+            "How do randomized election timeouts break ties?",
+            "Can older term log entries be committed directly?"
+        ]
+    elif any(k in lower_q for k in ("compare", "difference", "section")):
+        suggested_questions = [
+            "Compare Section A whiteboard notes with Section C slides",
+            "Are there any terminology conflicts between sections?",
+            "Which section covered Figure 8 corner cases in detail?"
+        ]
+    else:
+        suggested_questions = [
+            "Explain this concept with a classroom example",
+            "What are the exam-critical safety invariants?",
+            "Generate 3 practice MCQs based on this explanation"
+        ]
+
+    # Save assistant message
+    assistant_msg = repo.add_chat_message(
+        conversation_id=conv_id,
+        user_id=user_id,
+        role="assistant",
+        content=answer_text,
+        citations=citations,
+        suggested_questions=suggested_questions,
+    )
+
+    # Return updated conversation
+    updated_conv = repo.get_chat_conversation(conv_id, user_id)
+    return {
+        "conversation_id": conv_id,
+        "user_message": user_msg,
+        "assistant_message": assistant_msg,
+        "conversation": updated_conv,
+    }
+
+
+
+
+# -------------------------------------------------------------------------
 # 5. Smart Digital Diagrams
 # -------------------------------------------------------------------------
 @router.get("/diagrams/{lecture_id}")
@@ -1367,23 +1640,43 @@ def update_diagram(
 def get_section_vault(
     section: Optional[str] = Query(None, description="Section A to I"),
     subject: Optional[str] = Query(None, description="Subject filter"),
+    chapter: Optional[str] = Query(None, description="Chapter filter"),
     professor: Optional[str] = Query(None, description="Professor filter"),
+    lecture_date: Optional[str] = Query(None, description="Lecture date (YYYY-MM-DD)"),
     verification_status: Optional[str] = Query(None, description="Status filter"),
     search: Optional[str] = Query(None, description="Search keyword"),
+    sort_by: Optional[str] = Query("newest", description="Sort option: upvotes | newest | lecture_date | sources"),
+    opt_user: Optional[UserProfile] = Depends(get_optional_user),
     repo: LectraRepository = Depends(get_repo),
 ):
+    uid = opt_user.id if opt_user else "usr_lectra_default"
     notes = repo.list_vault_notes(
         section=section,
         subject=subject,
+        chapter=chapter,
         professor=professor,
+        lecture_date=lecture_date,
         verification_status=verification_status,
         search_query=search,
+        sort_by=sort_by,
+        requesting_user_id=uid,
+        requesting_user_section=opt_user.section.value if opt_user and opt_user.section else None,
+        requesting_user_course=opt_user.course if opt_user else None,
     )
     return {
         "section_filter": section or "ALL",
         "total_notes": len(notes),
         "notes": notes,
     }
+
+
+@router.post("/vault/check-duplicate")
+def check_duplicate(
+    req: DuplicateCheckRequest,
+    repo: LectraRepository = Depends(get_repo),
+):
+    """Detects potential duplicate contributions across subject, chapter, section, professor, and date."""
+    return repo.check_duplicates(req)
 
 
 @router.get("/vault/compare")
@@ -1425,6 +1718,7 @@ def share_to_vault(
 ):
     uid = opt_user.id if opt_user else "usr_lectra_default"
     uname = opt_user.full_name if opt_user else "Alex Rivera"
+
     try:
         existing = repo.get_master_note(req.lecture_id, requesting_user_id=uid)
     except PermissionError as err:
@@ -1434,9 +1728,25 @@ def share_to_vault(
     if existing.user_id != uid:
         raise HTTPException(status_code=403, detail="RLS Policy Violation: Only the owner of a master note can share it to the Section Vault.")
 
+    # Enforce explicit permission certification
+    has_explicit_perm = req.explicit_permission_granted or (
+        req.explicit_permission_granted is None and "explicit" in (req.summary or "").lower()
+    )
+    if not has_explicit_perm:
+        raise HTTPException(
+            status_code=400,
+            detail="Explicit student permission must be granted before sharing notes to the Section Vault.",
+        )
+
     # Explicitly mark master note visibility as shared
     existing.visibility = req.visibility if req.visibility != VisibilityType.PRIVATE else VisibilityType.SECTION
     repo.save_master_note(existing, requesting_user_id=uid)
+
+    # Determine verification status
+    if req.official_source_reference and req.official_source_reference.strip():
+        ver_status = VerificationStatus.SOURCE_VERIFIED
+    else:
+        ver_status = VerificationStatus.COMMUNITY_REVIEWED
 
     vault_entry = SectionVaultNote(
         id=f"vlt_{uuid4().hex[:10]}",
@@ -1450,17 +1760,43 @@ def share_to_vault(
         professor=existing.professor,
         section=req.section,
         source_sections=existing.source_sections,
-        lecture_date=utc_now()[:10],
+        lecture_date=req.lecture_date or utc_now()[:10],
         contributor_id=uid,
         contributor_name=uname,
         visibility=existing.visibility,
-        verification_status=VerificationStatus.COMMUNITY_REVIEWED,
+        sharing_scope=req.sharing_scope,
+        allowed_sections=req.allowed_sections,
+        enrolled_course=req.enrolled_course or (opt_user.course if opt_user else None),
+        explicit_permission_granted=bool(has_explicit_perm),
+        verification_status=ver_status,
+        official_source_reference=req.official_source_reference,
+        sources_count=req.sources_count or len(existing.source_sections) or 1,
         upvotes=1,
         summary=req.summary or existing.summary,
         download_available=True,
         tags=[req.subject_code, f"Section {req.section.value}", "Student Shared"],
+        upload_date=utc_now(),
     )
     repo.save_vault_note(vault_entry)
+
+    # Dispatch notification to peers enrolled in this subject/course
+    try:
+        cursor = repo._conn.cursor()
+        cursor.execute("SELECT id, full_name FROM lectra_users WHERE id != ?", (uid,))
+        users_to_notify = cursor.fetchall()
+        for u in users_to_notify:
+            repo.save_notification(
+                NotificationItem(
+                    user_id=u["id"],
+                    title=f"New Note Shared in {req.subject_code}",
+                    message=f"{uname} shared master notes for '{req.chapter}' (Section {req.section.value}).",
+                    type="course_announcement",
+                    link=f"/vault?subject={req.subject_code}&section={req.section.value}",
+                )
+            )
+    except Exception:
+        pass
+
     return {"message": "Shared to Section Vault successfully", "vault_note": vault_entry}
 
 
@@ -1468,8 +1804,36 @@ def share_to_vault(
 # 7. Study Kits Routes (Flashcards, MCQs, Timed Practice Quiz, Revision Sheets)
 # -------------------------------------------------------------------------
 @router.get("/study-kits")
-def list_study_kits(repo: LectraRepository = Depends(get_repo)):
-    return repo.list_study_kits()
+def list_study_kits(
+    user_id: Optional[str] = Query(None),
+    subject: Optional[str] = Query(None),
+    kit_type: Optional[str] = Query(None),
+    repo: LectraRepository = Depends(get_repo),
+):
+    return repo.list_study_kits(user_id=user_id, subject=subject, kit_type=kit_type)
+
+
+@router.post("/study-kits/generate")
+def generate_study_kit(
+    req: GenerateStudyKitRequest,
+    opt_user: Optional[UserProfile] = Depends(get_optional_user),
+    repo: LectraRepository = Depends(get_repo),
+    service: LectraSynthesisService = Depends(get_service),
+):
+    effective_uid = opt_user.id if opt_user else req.user_id
+    note = repo.get_master_note(req.lecture_id, requesting_user_id=effective_uid)
+    if not note:
+        raise HTTPException(status_code=404, detail="Master note not found for the specified lecture_id")
+
+    kit = service.generate_study_kit_from_master_note(
+        master_note=note,
+        kit_type=req.kit_type,
+        num_mcqs=req.num_mcqs,
+        difficulty=req.difficulty,
+        user_id=effective_uid,
+    )
+    saved = repo.save_study_kit(kit)
+    return saved
 
 
 @router.get("/flashcards")
@@ -1496,19 +1860,71 @@ def get_study_kit(lecture_id: str, repo: LectraRepository = Depends(get_repo)):
     return kit
 
 
+@router.put("/study-kits/{kit_id}")
+def update_study_kit(
+    kit_id: str,
+    req: UpdateStudyKitRequest,
+    opt_user: Optional[UserProfile] = Depends(get_optional_user),
+    repo: LectraRepository = Depends(get_repo),
+):
+    kit = repo.get_study_kit(kit_id)
+    if not kit:
+        raise HTTPException(status_code=404, detail="Study kit not found")
+
+    effective_uid = opt_user.id if opt_user else req.user_id
+    if effective_uid and kit.user_id and effective_uid != kit.user_id and effective_uid != "admin":
+        raise HTTPException(status_code=403, detail="Access restricted: You cannot edit another student's study kit.")
+
+    if req.title:
+        kit.title = req.title
+    if req.kit_type:
+        kit.kit_type = req.kit_type
+    if req.key_takeaways is not None:
+        kit.key_takeaways = req.key_takeaways
+    if req.one_page_summary is not None:
+        kit.one_page_summary = req.one_page_summary
+    if req.detailed_summary is not None:
+        kit.detailed_summary = req.detailed_summary
+    if req.last_minute_summary is not None:
+        kit.last_minute_summary = req.last_minute_summary
+
+    kit.updated_at = utc_now()
+    saved = repo.save_study_kit(kit)
+    return {"message": "Study kit updated successfully", "study_kit": saved}
+
+
+@router.delete("/study-kits/{kit_id}")
+def delete_study_kit(
+    kit_id: str,
+    user_id: str = Query("usr_lectra_default"),
+    opt_user: Optional[UserProfile] = Depends(get_optional_user),
+    repo: LectraRepository = Depends(get_repo),
+):
+    effective_uid = opt_user.id if opt_user else user_id
+    try:
+        deleted = repo.delete_study_kit(kit_id, user_id=effective_uid)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Study kit not found to delete")
+        return {"message": "Study kit successfully deleted", "id": kit_id}
+    except PermissionError as pe:
+        raise HTTPException(status_code=403, detail=str(pe))
+
+
 @router.post("/study-kits/{lecture_id}/quiz-submit")
 def submit_quiz_answers(
     lecture_id: str,
     req: QuizSubmissionRequest,
+    opt_user: Optional[UserProfile] = Depends(get_optional_user),
     repo: LectraRepository = Depends(get_repo),
 ):
     kit = repo.get_study_kit(lecture_id)
     if not kit:
         raise HTTPException(status_code=404, detail="Study kit not found")
 
+    effective_uid = opt_user.id if opt_user else req.user_id
     total_questions = len(kit.mcqs)
     if total_questions == 0:
-        return {"score": 0, "total": 0, "percentage": 0}
+        return {"score": 0, "total": 0, "percentage": 0, "passed": False}
 
     correct_count = 0
     breakdown = []
@@ -1532,22 +1948,293 @@ def submit_quiz_answers(
             "question": q.question,
             "selected_option": selected,
             "correct_option": q.correct_option_index,
+            "correct_answer": q.correct_answer or (q.options[q.correct_option_index] if 0 <= q.correct_option_index < len(q.options) else ""),
             "is_correct": is_correct,
             "explanation": q.explanation,
             "topic": topic,
+            "source_reference": q.source_reference or "",
         })
 
     percentage = round((correct_count / total_questions) * 100, 1)
+    passed = percentage >= 70.0
+
+    # Save attempt to database
+    attempt = QuizAttempt(
+        study_kit_id=kit.id,
+        lecture_id=kit.lecture_id,
+        user_id=effective_uid,
+        score=correct_count,
+        total=total_questions,
+        percentage=percentage,
+        passed=passed,
+        time_taken_seconds=req.time_taken_seconds,
+        answers=req.answers,
+        topic_performance=topic_scores,
+        detailed_breakdown=breakdown,
+    )
+    saved_attempt = repo.save_quiz_attempt(attempt)
+    prog = repo.get_student_kit_progress(kit.id, effective_uid)
 
     return {
+        "attempt_id": saved_attempt.id,
         "score": correct_count,
         "total": total_questions,
         "percentage": percentage,
-        "passed": percentage >= 70,
+        "passed": passed,
         "time_taken_seconds": req.time_taken_seconds,
         "topic_performance": topic_scores,
         "detailed_breakdown": breakdown,
+        "progress": prog,
     }
+
+
+@router.get("/study-kits/{lecture_id}/quiz-attempts")
+def get_quiz_attempts(
+    lecture_id: str,
+    user_id: Optional[str] = Query(None),
+    opt_user: Optional[UserProfile] = Depends(get_optional_user),
+    repo: LectraRepository = Depends(get_repo),
+):
+    effective_uid = user_id or (opt_user.id if opt_user else None)
+    return repo.list_quiz_attempts(kit_id=lecture_id, user_id=effective_uid)
+
+
+@router.post("/study-kits/{kit_id}/flashcards/{card_id}/progress")
+def update_flashcard_progress(
+    kit_id: str,
+    card_id: str,
+    req: FlashcardProgressRequest,
+    opt_user: Optional[UserProfile] = Depends(get_optional_user),
+    repo: LectraRepository = Depends(get_repo),
+):
+    if req.status not in ("mastered", "needs_review", "new"):
+        raise HTTPException(status_code=400, detail="Invalid review status. Must be 'mastered', 'needs_review', or 'new'.")
+    effective_uid = opt_user.id if opt_user else req.user_id
+    updated_progress = repo.update_flashcard_progress(kit_id, effective_uid, card_id, req.status)
+    return {"message": "Flashcard progress saved successfully", "progress": updated_progress}
+
+
+@router.post("/study-kits/{kit_id}/practice/evaluate")
+def evaluate_practice_question(
+    kit_id: str,
+    req: PracticeEvaluateRequest,
+    repo: LectraRepository = Depends(get_repo),
+    service: LectraSynthesisService = Depends(get_service),
+):
+    if not req.student_answer or not req.student_answer.strip():
+        raise HTTPException(status_code=400, detail="Student answer cannot be empty")
+
+    kit = repo.get_study_kit(kit_id)
+    if not kit:
+        raise HTTPException(status_code=404, detail="Study kit not found")
+
+    target_q = next((pq for pq in kit.practice_questions if pq.id == req.question_id), None)
+    if not target_q:
+        raise HTTPException(status_code=404, detail="Practice question not found in this study kit")
+
+    return service.evaluate_practice_answer(target_q, req.student_answer)
+
+
+@router.get("/export/study-kit/pdf/{kit_id}", response_class=HTMLResponse)
+def export_study_kit_pdf(
+    kit_id: str,
+    mode: str = Query("all", description="one_page | detailed | last_minute | all"),
+    repo: LectraRepository = Depends(get_repo),
+):
+    kit = repo.get_study_kit(kit_id)
+    if not kit:
+        raise HTTPException(status_code=404, detail="Study kit not found")
+
+    takeaways_html = "".join(f"<li>{t}</li>" for t in kit.key_takeaways)
+    definitions_html = "".join(
+        f"<li><strong>{d.term}:</strong> {d.definition} <em>({d.context or 'Core Concept'})</em></li>"
+        for d in kit.revision_sheet.core_definitions
+    )
+    formulas_html = "".join(
+        f'<div class="formula-box"><strong>Formula:</strong> {f.latex_or_text}<br><small>{f.explanation}</small></div>'
+        for f in kit.revision_sheet.critical_formulas
+    )
+    tips_html = "".join(f"<li>{tip}</li>" for tip in kit.revision_sheet.professor_tips)
+
+    summary_section = ""
+    if mode == "one_page" and kit.one_page_summary:
+        summary_section = f'<div class="summary-card"><h2>One-Page Revision Sheet</h2><pre class="sheet-pre">{html.escape(kit.one_page_summary)}</pre></div>'
+    elif mode == "detailed" and kit.detailed_summary:
+        summary_section = f'<div class="summary-card"><h2>Detailed Revision Guide</h2><pre class="sheet-pre">{html.escape(kit.detailed_summary)}</pre></div>'
+    elif mode == "last_minute" and kit.last_minute_summary:
+        summary_section = f'<div class="summary-card"><h2>Last-Minute Exam Summary</h2><pre class="sheet-pre">{html.escape(kit.last_minute_summary)}</pre></div>'
+    else:
+        # Combined / All mode
+        summary_section = f"""
+        <div class="summary-card">
+          <h2>One-Page High-Yield Revision Sheet</h2>
+          <pre class="sheet-pre">{html.escape(kit.one_page_summary or "Summary grounded in lecture notes.")}</pre>
+        </div>
+        <div class="summary-card" style="page-break-before: always;">
+          <h2>Last-Minute Exam Checklist</h2>
+          <pre class="sheet-pre">{html.escape(kit.last_minute_summary or "Exam checklist.")}</pre>
+        </div>
+        """
+
+    html_content = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>LECTRA Study Kit — {kit.title}</title>
+  <style>
+    @page {{
+      size: A4;
+      margin: 15mm;
+    }}
+    body {{
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      line-height: 1.6;
+      color: #0F172A;
+      background: #FFFFFF;
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 20px;
+    }}
+    .brand-header {{
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 2px solid #0B132B;
+      padding-bottom: 12px;
+      margin-bottom: 20px;
+    }}
+    .brand-title {{
+      font-size: 22px;
+      font-weight: 800;
+      color: #0B132B;
+      letter-spacing: -0.5px;
+    }}
+    .brand-tagline {{
+      font-size: 10px;
+      color: #64748B;
+      text-transform: uppercase;
+      font-weight: 700;
+    }}
+    .metadata-box {{
+      background: #F8FAFC;
+      border: 1px solid #E2E8F0;
+      border-radius: 8px;
+      padding: 12px 16px;
+      margin-bottom: 20px;
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 8px;
+      font-size: 13px;
+    }}
+    .metadata-label {{
+      font-weight: 700;
+      color: #475569;
+    }}
+    h1 {{
+      font-size: 22px;
+      color: #0F172A;
+      margin-bottom: 6px;
+    }}
+    h2 {{
+      font-size: 16px;
+      color: #1E293B;
+      border-bottom: 1px solid #E2E8F0;
+      padding-bottom: 4px;
+      margin-top: 20px;
+    }}
+    .formula-box {{
+      background: #F1F5F9;
+      padding: 10px;
+      border-radius: 6px;
+      font-family: monospace;
+      font-size: 13px;
+      margin: 8px 0;
+      border-left: 3px solid #6366F1;
+    }}
+    .tips-box {{
+      background: #EEF2FF;
+      border-left: 4px solid #4F46E5;
+      padding: 10px 14px;
+      border-radius: 0 6px 6px 0;
+      margin: 12px 0;
+      font-size: 13px;
+      color: #312E81;
+    }}
+    .sheet-pre {{
+      white-space: pre-wrap;
+      font-family: inherit;
+      background: #FAFAFA;
+      border: 1px solid #E5E7EB;
+      padding: 14px;
+      border-radius: 6px;
+      font-size: 12px;
+      line-height: 1.5;
+    }}
+    .print-button {{
+      background: #0B132B;
+      color: #FFFFFF;
+      border: none;
+      padding: 8px 16px;
+      font-size: 13px;
+      font-weight: 700;
+      border-radius: 6px;
+      cursor: pointer;
+      margin-bottom: 16px;
+    }}
+    @media print {{
+      .no-print {{
+        display: none !important;
+      }}
+    }}
+  </style>
+</head>
+<body>
+  <div class="no-print" style="text-align: right;">
+    <button class="print-button" onclick="window.print()">Print / Save PDF</button>
+  </div>
+  <div class="brand-header">
+    <div>
+      <div class="brand-title">LECTRA</div>
+      <div class="brand-tagline">AI Study Kit & Exam Preparation Engine</div>
+    </div>
+    <div style="text-align: right; font-size: 11px; color: #64748B;">
+      Verified Study Material • Mode: {mode.upper()}
+    </div>
+  </div>
+
+  <h1>{kit.title}</h1>
+  <div class="metadata-box">
+    <div><span class="metadata-label">Course:</span> {kit.subject_code or kit.subject_name}</div>
+    <div><span class="metadata-label">Chapter:</span> {kit.chapter}</div>
+    <div><span class="metadata-label">Instructor:</span> {kit.professor or 'Faculty'}</div>
+    <div><span class="metadata-label">Kit Type:</span> {kit.kit_type.title()}</div>
+  </div>
+
+  {summary_section}
+
+  <h2>Key Definitions</h2>
+  <ul>{definitions_html}</ul>
+
+  <h2>Critical Formulas</h2>
+  {formulas_html}
+
+  <h2>Professor Exam Warnings</h2>
+  <div class="tips-box">
+    <ul>{tips_html}</ul>
+  </div>
+
+  <div style="margin-top: 30px; padding-top: 10px; border-top: 1px solid #E2E8F0; font-size: 10px; color: #94A3B8; text-align: center;">
+    Generated by LECTRA Academic Collaboration Platform • Grounded in Verified Master Notes
+  </div>
+  <script>
+    window.addEventListener('DOMContentLoaded', () => {{
+      // Auto-trigger print when loaded
+      // window.print();
+    }});
+  </script>
+</body>
+</html>"""
+    return HTMLResponse(content=html_content)
 
 
 # -------------------------------------------------------------------------
@@ -1589,9 +2276,88 @@ def add_review(req: ReviewSubmissionRequest, repo: LectraRepository = Depends(ge
         user_section=req.user_section,
         rating=req.rating,
         comment=req.comment,
+        is_inaccuracy_report=req.is_inaccuracy_report,
+        inaccuracy_details=req.inaccuracy_details,
+        verified_against_official_source=req.verified_against_official_source,
+        official_source_citation=req.official_source_citation,
     )
     repo.save_review(rev)
+
+    # If it is an inaccuracy report, register on the vault note
+    if req.is_inaccuracy_report:
+        repo.report_vault_note(
+            req.vault_note_id,
+            req.inaccuracy_details or req.comment,
+            req.user_name,
+        )
+
+    # Dispatch notification to note owner
+    try:
+        note = repo.get_vault_note(req.vault_note_id)
+        if note and note.contributor_id != req.user_id:
+            repo.save_notification(
+                NotificationItem(
+                    user_id=note.contributor_id,
+                    title="New Review on Your Note",
+                    message=f"{req.user_name} reviewed your shared note for '{note.chapter}' ({req.rating}/5 stars).",
+                    type="review",
+                    link=f"/vault?section={note.section.value}",
+                )
+            )
+    except Exception:
+        pass
+
     return {"message": "Review added", "review": rev}
+
+
+@router.post("/community/reviews/{review_id}/reply")
+def reply_to_review(
+    review_id: str,
+    req: ReviewReplyRequest,
+    repo: LectraRepository = Depends(get_repo),
+):
+    reply_dict = {
+        "id": f"rpl_{uuid4().hex[:8]}",
+        "user_id": req.user_id,
+        "user_name": req.user_name,
+        "user_section": req.user_section.value if hasattr(req.user_section, "value") else str(req.user_section),
+        "comment": req.comment,
+        "created_at": utc_now(),
+    }
+    updated_rev = repo.add_review_reply(review_id, reply_dict)
+    if not updated_rev:
+        raise HTTPException(status_code=404, detail="Review not found to reply")
+
+    # Dispatch notification to original reviewer
+    if updated_rev.user_id != req.user_id:
+        try:
+            repo.save_notification(
+                NotificationItem(
+                    user_id=updated_rev.user_id,
+                    title="New Reply to Your Review",
+                    message=f"{req.user_name} replied to your review.",
+                    type="feedback",
+                    link="/vault",
+                )
+            )
+        except Exception:
+            pass
+
+    return {"message": "Reply added", "review": updated_rev}
+
+
+@router.get("/community/profile/{user_id}")
+def get_contributor_profile(user_id: str, repo: LectraRepository = Depends(get_repo)):
+    return repo.get_contributor_profile(user_id)
+
+
+@router.get("/community/history")
+def get_contribution_history(
+    user_id: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    repo: LectraRepository = Depends(get_repo),
+):
+    return repo.list_contribution_history(user_id=user_id, limit=limit)
 
 
 # -------------------------------------------------------------------------

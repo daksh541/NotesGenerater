@@ -22,6 +22,17 @@ export default defineConfig({
                 changeOrigin: true,
             }
         }
+    },
+    build: {
+        rollupOptions: {
+            output: {
+                manualChunks(id) {
+                    if (id.includes('node_modules/mermaid')) return 'mermaid';
+                    if (id.includes('node_modules/lucide-react')) return 'icons';
+                    if (id.includes('node_modules/react') || id.includes('node_modules/react-dom')) return 'vendor';
+                }
+            }
+        }
     }
 
 })

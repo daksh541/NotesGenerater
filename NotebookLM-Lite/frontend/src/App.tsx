@@ -29,6 +29,7 @@ import { ProfileView } from './components/lectra/ProfileView';
 import { NotificationsView } from './components/lectra/NotificationsView';
 import { AuthView } from './components/lectra/AuthView';
 import { AuthModal, AuthModalMode } from './components/lectra/AuthModal';
+import { NotebookChatView } from './components/lectra/NotebookChatView';
 
 export type Language = 'en' | 'zh';
 export const LanguageContext = createContext<{ lang: Language; setLang: (l: Language) => void }>({
@@ -847,7 +848,12 @@ export default function App() {
                     {/* Persistent Left Sidebar */}
                     <LectraSidebar
                         activeTab={activeTab}
-                        onSelectTab={(t) => setActiveTab(t)}
+                        onSelectTab={(t) => {
+                            if (t === 'notes-viewer' && !activeMasterNote && recentNotes.length > 0) {
+                                setActiveMasterNote(recentNotes[0]);
+                            }
+                            setActiveTab(t);
+                        }}
                         currentSection={currentSection}
                         subjects={subjects}
                         currentSubject={currentSubject}
@@ -855,14 +861,8 @@ export default function App() {
                             setCurrentSubject(s);
                             setActiveTab('dashboard');
                         }}
-                        recentWorkspaces={recentWorkspaces}
-                        onSelectWorkspace={(ws) => {
-                            const found = subjects.find(
-                                (s) => s.id === ws.id || s.code === ws.code
-                            );
-                            if (found) setCurrentSubject(found);
-                            setActiveTab('dashboard');
-                        }}
+                        recentNotes={recentNotes}
+                        onSelectNote={(lecId) => handleSelectNoteFromVault(lecId)}
                         collapsed={sidebarCollapsed}
                         onToggleCollapsed={() => setSidebarCollapsed(!sidebarCollapsed)}
                         mobileOpen={mobileSidebarOpen}
@@ -874,6 +874,29 @@ export default function App() {
                     <div className="flex-1 flex flex-col min-w-0 overflow-y-auto h-screen">
                         {/* Top Navigation Bar */}
                         <LectraHeader
+                            pageTitle={
+                                activeTab === 'dashboard'
+                                    ? 'Home'
+                                    : activeTab === 'chat'
+                                    ? 'Notebook Chat'
+                                    : activeTab === 'studio'
+                                    ? 'AI Notes Studio'
+                                    : activeTab === 'vault'
+                                    ? 'Section Vault'
+                                    : activeTab === 'study-kits'
+                                    ? 'Study Kits'
+                                    : activeTab === 'notes-viewer'
+                                    ? 'Master Notes'
+                                    : activeTab === 'professors'
+                                    ? 'Professor Library'
+                                    : activeTab === 'community'
+                                    ? 'Community'
+                                    : activeTab === 'notifications'
+                                    ? 'Notifications'
+                                    : activeTab === 'profile'
+                                    ? 'Profile'
+                                    : 'Settings'
+                            }
                             currentSubject={currentSubject}
                             subjects={subjects}
                             onSelectSubject={(s) => setCurrentSubject(s)}
@@ -915,6 +938,7 @@ export default function App() {
                                     currentSection={currentSection}
                                     onOpenStudio={() => setActiveTab('studio')}
                                     onOpenVault={() => setActiveTab('vault')}
+                                    onOpenChat={() => setActiveTab('chat')}
                                     onOpenStudyKit={(lecId) => {
                                         if (lecId) {
                                             const found = studyKits.find(
@@ -934,6 +958,31 @@ export default function App() {
                                         setActiveTab('vault');
                                     }}
                                     onRefreshDashboard={refreshDashboardData}
+                                    onNotify={showNotification}
+                                />
+                            )}
+
+                            {activeTab === 'chat' && (
+                                <NotebookChatView
+                                    currentSubject={currentSubject}
+                                    userProfile={userProfile}
+                                    activeMasterNote={activeMasterNote}
+                                    recentNotes={effectiveRecentNotes}
+                                    uploadHistory={uploadHistory}
+                                    currentSection={currentSection}
+                                    onOpenStudio={() => setActiveTab('studio')}
+                                    onOpenMasterNote={(note) => {
+                                        setActiveMasterNote(note);
+                                        setActiveTab('notes-viewer');
+                                    }}
+                                    onOpenStudyKit={(lecId) => {
+                                        if (lecId) {
+                                            const found = studyKits.find((k) => k.lecture_id === lecId);
+                                            if (found) setActiveStudyKit(found);
+                                        }
+                                        setActiveTab('study-kits');
+                                    }}
+                                    onOpenVault={() => setActiveTab('vault')}
                                     onNotify={showNotification}
                                 />
                             )}
@@ -965,6 +1014,7 @@ export default function App() {
                                     studyKits={studyKits}
                                     initialLectureId={activeMasterNote?.lecture_id}
                                     onViewMasterNote={(lecId) => handleSelectNoteFromVault(lecId)}
+                                    onRefreshKits={() => refreshDashboardData()}
                                 />
                             )}
 
@@ -986,25 +1036,102 @@ export default function App() {
                                 />
                             )}
 
-                            {activeTab === 'notes-viewer' && activeMasterNote && (
-                                <MasterNotesView
-                                    note={activeMasterNote}
-                                    diagrams={activeDiagrams}
-                                    studyKit={activeStudyKit}
-                                    onNoteUpdated={(updated) => {
-                                        setActiveMasterNote(updated);
-                                        setRecentNotes((prev) =>
-                                            prev.map((n) => (n.id === updated.id ? updated : n))
-                                        );
-                                    }}
-                                    onOpenStudyKit={(lecId) => {
-                                        const found = studyKits.find(
-                                            (k) => k.lecture_id === lecId
-                                        );
-                                        if (found) setActiveStudyKit(found);
-                                        setActiveTab('study-kits');
-                                    }}
-                                />
+                            {activeTab === 'notes-viewer' && (
+                                activeMasterNote ? (
+                                    <MasterNotesView
+                                        note={activeMasterNote}
+                                        diagrams={activeDiagrams}
+                                        studyKit={activeStudyKit}
+                                        allNotes={recentNotes}
+                                        onSelectNote={(n) => setActiveMasterNote(n)}
+                                        onNoteUpdated={(updated) => {
+                                            setActiveMasterNote(updated);
+                                            setRecentNotes((prev) =>
+                                                prev.map((n) => (n.id === updated.id ? updated : n))
+                                            );
+                                        }}
+                                        onOpenStudyKit={(lecId) => {
+                                            const found = studyKits.find(
+                                                (k) => k.lecture_id === lecId
+                                            );
+                                            if (found) setActiveStudyKit(found);
+                                            setActiveTab('study-kits');
+                                        }}
+                                        onOpenChat={(note) => {
+                                            setActiveMasterNote(note);
+                                            setActiveTab('chat');
+                                        }}
+                                    />
+                                ) : (
+                                    <div className="space-y-6 max-w-5xl mx-auto pb-16 animate-fade-in">
+                                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200/80 pb-4 dark:border-slate-800">
+                                            <div>
+                                                <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
+                                                    My Notes
+                                                </h1>
+                                                <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-0.5">
+                                                    All your synthesized academic Master Notes in one place.
+                                                </p>
+                                            </div>
+                                            <button
+                                                type="button"
+                                                onClick={() => setActiveTab('studio')}
+                                                className="inline-flex items-center space-x-1.5 rounded-lg bg-indigo-600 px-3.5 py-2 text-xs font-semibold text-white shadow-xs hover:bg-indigo-500 transition"
+                                            >
+                                                <span>+ Create Master Notes</span>
+                                            </button>
+                                        </div>
+
+                                        {recentNotes.length === 0 ? (
+                                            <div className="rounded-xl border border-dashed border-slate-200 p-12 text-center dark:border-slate-800">
+                                                <p className="text-sm font-semibold text-slate-800 dark:text-slate-200">
+                                                    No Master Notes generated yet
+                                                </p>
+                                                <p className="text-xs text-slate-400 mt-1">
+                                                    Upload whiteboard photos or reference PDFs to generate structured notes.
+                                                </p>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setActiveTab('studio')}
+                                                    className="mt-4 rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white hover:bg-indigo-500 transition"
+                                                >
+                                                    Open AI Notes Studio
+                                                </button>
+                                            </div>
+                                        ) : (
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                {recentNotes.map((n) => (
+                                                    <div
+                                                        key={n.id}
+                                                        onClick={() => setActiveMasterNote(n)}
+                                                        className="group rounded-xl border border-slate-200/90 bg-white p-5 shadow-2xs hover:border-indigo-400 transition cursor-pointer dark:border-slate-800 dark:bg-slate-900 space-y-2.5"
+                                                    >
+                                                        <div className="flex items-center justify-between">
+                                                            <span className="rounded bg-indigo-50 px-2 py-0.5 text-xs font-bold text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">
+                                                                {n.subject_code}
+                                                            </span>
+                                                            <span className="text-[10px] text-slate-400">
+                                                                Sec {n.section}
+                                                            </span>
+                                                        </div>
+                                                        <h3 className="font-bold text-sm text-slate-900 dark:text-white group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition truncate">
+                                                            {n.chapter || n.title}
+                                                        </h3>
+                                                        <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2">
+                                                            {n.summary}
+                                                        </p>
+                                                        <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-[11px] text-slate-400">
+                                                            <span>Prof. {n.professor}</span>
+                                                            <span className="font-semibold text-indigo-600 dark:text-indigo-400 group-hover:underline">
+                                                                Open in Viewer →
+                                                            </span>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                )
                             )}
 
                             {activeTab === 'profile' && (

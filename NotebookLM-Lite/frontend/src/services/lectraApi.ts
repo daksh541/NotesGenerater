@@ -2,21 +2,32 @@ import axios from 'axios';
 import {
     AcademicCatalog,
     AuthSessionResponse,
+    ChatConversation,
+    ChatMessage,
     CommunityReview,
+    ContributionHistoryItem,
+    ContributorProfile,
     DashboardMetrics,
+    DuplicateCheckRequest,
+    DuplicateCheckResult,
     FlashcardItem,
     MasterNoteContent,
     MCQQuestion,
     NoteSection,
     NotificationItem,
+    PracticeEvaluationResponse,
+    PracticeQuestionItem,
     ProcessingPipelineJob,
     ProfessorProfile,
+    QuizAttempt,
     SectionComparisonResult,
     SectionId,
     SectionVaultNote,
+    SharingScope,
     SmartDiagram,
     SourceMaterialType,
     StorageBucketType,
+    StudentKitProgress,
     StudyKit,
     SubjectModel,
     UploadedSourceItem,
@@ -26,7 +37,7 @@ import {
     WorkspaceStatus,
 } from '../types/lectra';
 
-const API_BASE = '/api/lectra';
+const API_BASE = (import.meta.env.VITE_API_BASE_URL ? import.meta.env.VITE_API_BASE_URL.replace(/\/+$/, '') : '') + '/api/lectra';
 const SESSION_STORAGE_KEY = 'lectra_auth_session_v2';
 
 export interface StoredSession {
@@ -296,11 +307,19 @@ export const lectraApi = {
     async getVaultNotes(params?: {
         section?: string;
         subject?: string;
+        chapter?: string;
         professor?: string;
+        lecture_date?: string;
         verification_status?: string;
         search?: string;
+        sort_by?: string;
     }): Promise<{ section_filter: string; total_notes: number; notes: SectionVaultNote[] }> {
         const res = await http.get('/vault', { params });
+        return res.data;
+    },
+
+    async checkDuplicate(data: DuplicateCheckRequest): Promise<DuplicateCheckResult> {
+        const res = await http.post('/vault/check-duplicate', data);
         return res.data;
     },
 
@@ -345,6 +364,13 @@ export const lectraApi = {
         section: SectionId;
         summary: string;
         visibility?: VisibilityType;
+        sharing_scope?: SharingScope;
+        allowed_sections?: SectionId[];
+        enrolled_course?: string;
+        explicit_permission_granted: boolean;
+        official_source_reference?: string;
+        sources_count?: number;
+        lecture_date?: string;
     }): Promise<{ message: string; vault_note: SectionVaultNote }> {
         const res = await http.post('/vault/share', data);
         return res.data;
@@ -432,8 +458,23 @@ export const lectraApi = {
     },
 
     // Study Kits, Flashcards & Quizzes
-    async listStudyKits(): Promise<StudyKit[]> {
-        const res = await http.get('/study-kits');
+    async listStudyKits(params?: {
+        user_id?: string;
+        subject?: string;
+        kit_type?: string;
+    }): Promise<StudyKit[]> {
+        const res = await http.get('/study-kits', { params });
+        return res.data;
+    },
+
+    async generateStudyKit(payload: {
+        lecture_id: string;
+        kit_type?: string;
+        num_mcqs?: number;
+        difficulty?: string;
+        user_id?: string;
+    }): Promise<StudyKit> {
+        const res = await http.post('/study-kits/generate', payload);
         return res.data;
     },
 
@@ -447,16 +488,42 @@ export const lectraApi = {
         return res.data;
     },
 
-    async getStudyKit(lectureId: string): Promise<StudyKit> {
-        const res = await http.get(`/study-kits/${lectureId}`);
+    async getStudyKit(lectureId: string, userId?: string): Promise<StudyKit> {
+        const res = await http.get(`/study-kits/${lectureId}`, {
+            params: userId ? { user_id: userId } : undefined,
+        });
+        return res.data;
+    },
+
+    async updateStudyKit(
+        kitId: string,
+        data: {
+            title?: string;
+            one_page_summary?: string;
+            detailed_summary?: string;
+            last_minute_summary?: string;
+            key_takeaways?: string[];
+            user_id?: string;
+        }
+    ): Promise<{ message: string; study_kit: StudyKit }> {
+        const res = await http.put(`/study-kits/${kitId}`, data);
+        return res.data;
+    },
+
+    async deleteStudyKit(kitId: string, userId?: string): Promise<{ message: string; id: string }> {
+        const res = await http.delete(`/study-kits/${kitId}`, {
+            params: userId ? { user_id: userId } : undefined,
+        });
         return res.data;
     },
 
     async submitQuiz(
         lectureId: string,
         answers: Record<string, number>,
-        timeTakenSeconds: number
+        timeTakenSeconds: number,
+        userId?: string
     ): Promise<{
+        attempt_id: string;
         score: number;
         total: number;
         percentage: number;
@@ -464,12 +531,50 @@ export const lectraApi = {
         time_taken_seconds: number;
         topic_performance: Record<string, { correct: number; total: number }>;
         detailed_breakdown: any[];
+        progress?: StudentKitProgress;
     }> {
         const res = await http.post(`/study-kits/${lectureId}/quiz-submit`, {
             answers,
             time_taken_seconds: timeTakenSeconds,
+            user_id: userId,
         });
         return res.data;
+    },
+
+    async getQuizAttempts(lectureId: string, userId?: string): Promise<QuizAttempt[]> {
+        const res = await http.get(`/study-kits/${lectureId}/quiz-attempts`, {
+            params: userId ? { user_id: userId } : undefined,
+        });
+        return res.data;
+    },
+
+    async updateFlashcardProgress(
+        kitId: string,
+        cardId: string,
+        status: 'mastered' | 'needs_review' | 'new',
+        userId?: string
+    ): Promise<{ message: string; progress: StudentKitProgress }> {
+        const res = await http.post(`/study-kits/${kitId}/flashcards/${cardId}/progress`, {
+            status,
+            user_id: userId,
+        });
+        return res.data;
+    },
+
+    async evaluatePracticeAnswer(
+        kitId: string,
+        questionId: string,
+        studentAnswer: string
+    ): Promise<PracticeEvaluationResponse> {
+        const res = await http.post(`/study-kits/${kitId}/practice/evaluate`, {
+            question_id: questionId,
+            student_answer: studentAnswer,
+        });
+        return res.data;
+    },
+
+    getStudyKitPdfUrl(kitId: string, mode: 'one_page' | 'detailed' | 'last_minute' | 'all' = 'all'): string {
+        return `${API_BASE}/export/study-kit/pdf/${kitId}?mode=${mode}`;
     },
 
     // Professor Library
@@ -496,8 +601,38 @@ export const lectraApi = {
         user_section: SectionId;
         rating: number;
         comment: string;
+        is_inaccuracy_report?: boolean;
+        inaccuracy_details?: string;
+        verified_against_official_source?: boolean;
+        official_source_citation?: string;
     }): Promise<{ message: string; review: CommunityReview }> {
         const res = await http.post('/community/reviews', data);
+        return res.data;
+    },
+
+    async replyToReview(
+        reviewId: string,
+        data: {
+            user_id: string;
+            user_name: string;
+            user_section: SectionId;
+            comment: string;
+        }
+    ): Promise<{ message: string; review: CommunityReview }> {
+        const res = await http.post(`/community/reviews/${reviewId}/reply`, data);
+        return res.data;
+    },
+
+    async getContributorProfile(userId: string): Promise<ContributorProfile> {
+        const res = await http.get(`/community/profile/${userId}`);
+        return res.data;
+    },
+
+    async getContributionHistory(params?: {
+        user_id?: string;
+        limit?: number;
+    }): Promise<ContributionHistoryItem[]> {
+        const res = await http.get('/community/history', { params });
         return res.data;
     },
 
@@ -658,5 +793,60 @@ export const lectraApi = {
     // Export URLs
     getExportUrl(type: 'pdf' | 'docx' | 'markdown', lectureId: string): string {
         return `${API_BASE}/export/${type}/${lectureId}`;
+    },
+
+    // NotebookLM-Inspired Grounded Chatbot API
+    async listChatConversations(): Promise<ChatConversation[]> {
+        const res = await http.get('/chat/conversations');
+        return res.data;
+    },
+
+    async createChatConversation(data: {
+        title?: string;
+        workspace_id?: string;
+        subject_code?: string;
+        chapter?: string;
+        lecture_id?: string;
+        selected_source_ids?: string[];
+        initial_message?: string;
+    }): Promise<ChatConversation> {
+        const res = await http.post('/chat/conversations', data);
+        return res.data;
+    },
+
+    async getChatConversation(convId: string): Promise<ChatConversation> {
+        const res = await http.get(`/chat/conversations/${convId}`);
+        return res.data;
+    },
+
+    async updateChatConversation(
+        convId: string,
+        data: { title?: string; selected_source_ids?: string[] }
+    ): Promise<ChatConversation> {
+        const res = await http.put(`/chat/conversations/${convId}`, data);
+        return res.data;
+    },
+
+    async deleteChatConversation(convId: string): Promise<{ message: string; id: string }> {
+        const res = await http.delete(`/chat/conversations/${convId}`);
+        return res.data;
+    },
+
+    async sendChatMessage(
+        convId: string,
+        message: string,
+        selectedSourceIds?: string[],
+        lectureId?: string
+    ): Promise<{
+        user_message: ChatMessage;
+        assistant_message: ChatMessage;
+        conversation: ChatConversation;
+    }> {
+        const res = await http.post(`/chat/conversations/${convId}/messages`, {
+            message,
+            selected_source_ids: selectedSourceIds,
+            lecture_id: lectureId,
+        });
+        return res.data;
     },
 };

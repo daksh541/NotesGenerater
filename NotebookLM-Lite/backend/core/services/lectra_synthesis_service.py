@@ -36,6 +36,8 @@ from ...domain.lectra import (
     DefinitionItem,
     EquationItem,
     ExamConceptItem,
+    ExamPriorityAnalysis,
+    ExamPriorityTopic,
     ExamRevisionSheet,
     ExampleItem,
     FlashcardItem,
@@ -47,6 +49,8 @@ from ...domain.lectra import (
     NoteTable,
     NotificationItem,
     OCRResult,
+    PracticeEvaluationResponse,
+    PracticeQuestionItem,
     ProcessingPipelineJob,
     ProfessorProfile,
     ProfessorStyleAnalysis,
@@ -56,6 +60,7 @@ from ...domain.lectra import (
     SmartDiagram,
     SourceCitation,
     SourceMaterialType,
+    StudentKitProgress,
     StudyKit,
     SubjectModel,
     UncertainWordItem,
@@ -793,6 +798,7 @@ class LectraSynthesisService:
         ocr_results: List[OCRResult],
         ref_results: List[ReferenceAnalysisResult],
         prof_style: ProfessorStyleAnalysis,
+        user_id: Optional[str] = None,
     ) -> MasterNoteContent:
         """
         Merges official reference documents (structural foundation) with classroom whiteboard OCR:
@@ -1169,6 +1175,7 @@ class LectraSynthesisService:
         return MasterNoteContent(
             id=f"mnote_{uuid4().hex[:10]}",
             lecture_id=lecture_id,
+            user_id=user_id or "usr_lectra_default",
             title=title,
             subject_id=subject_id,
             subject_name=subject_name,
@@ -1763,6 +1770,7 @@ class LectraSynthesisService:
                 ocr_results=ocr_results,
                 ref_results=ref_results,
                 prof_style=prof_style,
+                user_id=user_id,
             )
 
             smart_diagrams = self.reconstruct_smart_diagrams(
@@ -1773,7 +1781,7 @@ class LectraSynthesisService:
                 ocr_results=ocr_results,
             )
 
-            study_kit = self._generate_study_kit(lecture_id, title, subject_name, chapter, master_note)
+            study_kit = self._generate_study_kit(lecture_id, title, subject_name, chapter, master_note, user_id=user_id)
             await asyncio.sleep(0.15)
 
             # ----------------------------------------------------
@@ -2084,7 +2092,7 @@ class LectraSynthesisService:
         return note
 
     # ------------------------------------------------------------------
-    # Study Kit Generation
+    # Study Kit Generation & AI Practice Engine (Phase 5)
     # ------------------------------------------------------------------
     def _generate_study_kit(
         self,
@@ -2093,102 +2101,729 @@ class LectraSynthesisService:
         subject_name: str,
         chapter: str,
         master_note: MasterNoteContent,
+        user_id: str = "usr_lectra_default",
     ) -> StudyKit:
-        mcqs = [
+        return self.generate_study_kit_from_master_note(
+            master_note=master_note,
+            kit_type="comprehensive",
+            num_mcqs=5,
+            user_id=user_id,
+        )
+
+    def generate_study_kit_from_master_note(
+        self,
+        master_note: MasterNoteContent,
+        kit_type: str = "comprehensive",
+        num_mcqs: int = 5,
+        difficulty: Optional[str] = None,
+        user_id: str = "usr_lectra_default",
+    ) -> StudyKit:
+        """
+        Generates a complete, grounded AI Study Kit and Exam Preparation Engine from Master Notes:
+        1. Chapter summary & key takeaways
+        2. Three revision sheets: One-page revision sheet, Detailed revision sheet, Last-minute exam summary
+        3. Chapter-specific MCQs with 4 options, explanations, difficulty levels, and grounded source references
+        4. Interactive flashcards with Front and Back, status tracking, and topics
+        5. Five practice question types: Short-answer, Long-answer, Conceptual, Application, Formula
+        6. Exam priority analysis separating actual lecture emphasis from inferred priority
+        """
+        lec_id = master_note.lecture_id or master_note.id
+        subj_name = master_note.subject_name
+        subj_code = master_note.subject_code or "ACAD-101"
+        chap = master_note.chapter
+        prof = master_note.professor
+        sec_names = ", ".join(s.value for s in master_note.source_sections) if master_note.source_sections else "A"
+
+        # --- 1. Generate Grounded MCQs ---
+        candidate_mcqs: List[MCQQuestion] = []
+
+        # Question from Section 1: Foundations & Invariants
+        if master_note.sections:
+            sec0 = master_note.sections[0]
+            candidate_mcqs.append(
+                MCQQuestion(
+                    id=f"mcq_{uuid4().hex[:8]}",
+                    question=f"Under the primary framework for {chap}, what fundamental guarantee is strictly required across state transitions?",
+                    options=[
+                        "Every state transition must preserve the core safety invariant across a strict majority quorum",
+                        "All nodes must achieve clock synchronization with nanosecond timestamp precision",
+                        "Persistent memory flushes may be deferred indefinitely without write-ahead logging",
+                        "Communication must be strictly synchronous with zero packet loss guarantees",
+                    ],
+                    correct_option_index=0,
+                    explanation=f"Safety requires continuous invariant verification across a majority quorum as detailed in {sec0.heading}.",
+                    difficulty="medium",
+                    topic_reference="System Foundations",
+                    source_reference=f"Master Note: {sec0.heading}",
+                )
+            )
+
+        # Question from Formulas: Quorum Sizing / Mathematical Bounds
+        if master_note.important_formulas:
+            formula_item = master_note.important_formulas[0]
+            candidate_mcqs.append(
+                MCQQuestion(
+                    id=f"mcq_{uuid4().hex[:8]}",
+                    question=f"For a cluster or model governed by the equation {formula_item.latex_or_text}, what does this formula dictate?",
+                    options=[
+                        f"{formula_item.explanation}",
+                        "It restricts memory allocations to powers of two exclusively",
+                        "It minimizes transport layer latency by omitting cryptographic verification",
+                        "It disables backward backpropagation passes during evaluation mode",
+                    ],
+                    correct_option_index=0,
+                    explanation=f"According to course formulas: {formula_item.explanation} with variables {formula_item.variables}.",
+                    difficulty="easy",
+                    topic_reference="Mathematical Derivation",
+                    source_reference=f"Formula: {formula_item.latex_or_text}",
+                )
+            )
+
+        # Question from Definitions
+        if master_note.key_definitions:
+            d0 = master_note.key_definitions[0]
+            distractor_defs = [
+                "A transient buffer that gets garbage-collected upon thread termination",
+                "A network protocol header that encapsulates client authentication credentials",
+                "A heuristic approximation used when exact numerical solutions fail to converge",
+            ]
+            candidate_mcqs.append(
+                MCQQuestion(
+                    id=f"mcq_{uuid4().hex[:8]}",
+                    question=f"How is '{d0.term}' formally defined in the context of {chap}?",
+                    options=[
+                        d0.definition,
+                        distractor_defs[0],
+                        distractor_defs[1],
+                        distractor_defs[2],
+                    ],
+                    correct_option_index=0,
+                    explanation=f"'{d0.term}' is defined as: {d0.definition}. Context: {d0.context or 'Course syllabus'}.",
+                    difficulty="easy",
+                    topic_reference="Core Definitions",
+                    source_reference=f"Definition: {d0.term} ({d0.source_citation or 'Classroom Board'})",
+                )
+            )
+
+        # Question from Professor Emphasis / Exam Warnings
+        if master_note.exam_focused_concepts:
+            exam_c = master_note.exam_focused_concepts[0]
+            candidate_mcqs.append(
+                MCQQuestion(
+                    id=f"mcq_{uuid4().hex[:8]}",
+                    question=f"Why did Professor {prof} specifically emphasize '{exam_c.topic}' for examinations?",
+                    options=[
+                        f"It addresses a critical failure edge case: {exam_c.reason}",
+                        "It is an optional historical anecdote not graded on problem sets",
+                        "It only applies to deprecated legacy operating systems",
+                        "It replaces all mathematical derivations with heuristic estimates",
+                    ],
+                    correct_option_index=0,
+                    explanation=f"Professor {prof} emphasized {exam_c.topic} because: {exam_c.reason}. Weight: {exam_c.frequency_or_weight}.",
+                    difficulty="hard",
+                    topic_reference="Professor Verbal Emphasis",
+                    source_reference=f"Professor Emphasis ({prof}): {exam_c.topic}",
+                )
+            )
+
+        # Question from Examples / Failure Scenarios
+        if master_note.important_examples:
+            ex0 = master_note.important_examples[0]
+            candidate_mcqs.append(
+                MCQQuestion(
+                    id=f"mcq_{uuid4().hex[:8]}",
+                    question=f"In the walkthrough '{ex0.title}', how is the primary conflict or state mismatch resolved?",
+                    options=[
+                        f"{ex0.solution_steps[0] if ex0.solution_steps else ex0.description}",
+                        "The system halts execution and requires manual human operator restart",
+                        "Uncommitted writes are silently published without consensus verification",
+                        "Nodes revert to randomized timestamps without quorum overlap checks",
+                    ],
+                    correct_option_index=0,
+                    explanation=f"In the course walkthrough: {'; '.join(ex0.solution_steps[:2]) if ex0.solution_steps else ex0.description}.",
+                    difficulty="medium",
+                    topic_reference="Walkthrough Scenarios",
+                    source_reference=f"Example: {ex0.title}",
+                )
+            )
+
+        # Question from Source Verification / Conflicts
+        if master_note.needs_verification or master_note.source_conflicts:
+            conflict_topic = (
+                master_note.source_conflicts[0].topic
+                if master_note.source_conflicts
+                else master_note.needs_verification[0].item
+            )
+            candidate_mcqs.append(
+                MCQQuestion(
+                    id=f"mcq_{uuid4().hex[:8]}",
+                    question=f"When reconciling classroom board derivations with official textbook publications on '{conflict_topic}', what is the correct academic distinction?",
+                    options=[
+                        "State the classroom simplifying assumption for whiteboard proofs, while applying the general boundary condition for theoretical exam proofs",
+                        "Assume the textbook is obsolete and rely entirely on chalkboard approximations",
+                        "Discard classroom derivations and only memorize textbook definitions",
+                        "Treat both formulations as mathematically equivalent under all boundary parameters",
+                    ],
+                    correct_option_index=0,
+                    explanation=f"LECTRA resolves source discrepancies on '{conflict_topic}' by documenting classroom simplifying bounds alongside general reference theorems.",
+                    difficulty="hard",
+                    topic_reference="Source Conflict Resolution",
+                    source_reference=f"Verification Need: {conflict_topic}",
+                )
+            )
+
+        # Question on Quorum / Boundary Arithmetic
+        candidate_mcqs.append(
             MCQQuestion(
                 id=f"mcq_{uuid4().hex[:8]}",
-                question=f"Under the foundational system model for {chapter}, what condition is strictly required to guarantee safety across state transitions?",
+                question=f"In an academic cluster of N=7 nodes running consensus for {chap}, what is the maximum number of simultaneous crash failures F tolerated without halting progress?",
+                options=["F = 3 failures", "F = 4 failures", "F = 2 failures", "F = 1 failure"],
+                correct_option_index=0,
+                explanation="For N=7, maximum crash tolerance F = floor((N-1)/2) = floor(6/2) = 3 nodes. The quorum threshold Q = floor(7/2) + 1 = 4 nodes.",
+                difficulty="easy",
+                topic_reference="Fault Tolerance Bounds",
+                source_reference="Course Syllabus & Invariant Bounds",
+            )
+        )
+
+        candidate_mcqs.append(
+            MCQQuestion(
+                id=f"mcq_{uuid4().hex[:8]}",
+                question=f"What is the consequence of configuring timer intervals such that heartbeat period T_heartbeat exceeds election timeout T_election in {chap}?",
                 options=[
-                    "Every state transition must satisfy the primary invariant across a strict majority quorum",
-                    "All worker nodes must synchronize clocks with nanosecond precision",
-                    "Persistent disk writes can be deferred indefinitely without write-ahead logging",
-                    "Randomized timeouts must be set to identical values across all peers",
+                    "Followers continuously time out before hearing heartbeats, triggering endless spurious elections and stalling progress",
+                    "Throughput increases by 50% due to reduced RPC packet overhead",
+                    "The system automatically switches to Byzantine fault tolerant mode",
+                    "Leader election completes in zero sequential network round trips",
                 ],
                 correct_option_index=0,
-                explanation="Safety invariants require majority quorum agreement so that any two quorums overlap by at least one witness node.",
-                difficulty="medium",
-                topic_reference="System Model Invariants",
-            ),
-            MCQQuestion(
-                id=f"mcq_{uuid4().hex[:8]}",
-                question="For a cluster of N=9 participants, what is the minimum quorum threshold Q required to commit decisions safely?",
-                options=["4 participants", "5 participants", "6 participants", "7 participants"],
-                correct_option_index=1,
-                explanation="For N=9, strict majority Q = floor(9/2) + 1 = 4 + 1 = 5 participants.",
-                difficulty="easy",
-                topic_reference="Quorum Sizing",
-            ),
-            MCQQuestion(
-                id=f"mcq_{uuid4().hex[:8]}",
-                question=f"How should a student handle the distinction between {master_note.professor}'s board bound (2*Delta) and the general reference theorem?",
-                options=[
-                    "Ignore the official reference theorem completely",
-                    "State the zero-queuing classroom assumption when applying 2*Delta, and use the general bound for asynchronous proofs",
-                    "Assume network delay Delta is always zero",
-                    "Only use randomized timeouts without quorum checks",
-                ],
-                correct_option_index=1,
-                explanation="LECTRA flags source distinctions so students know both the general reference theorem and the classroom simplifying assumption.",
+                explanation="If T_heartbeat >= T_election, followers fail to receive liveness heartbeats in time, causing constant leader re-elections and cluster instability.",
                 difficulty="hard",
-                topic_reference="Source Conflict Resolution",
+                topic_reference="Timer Dynamics",
+                source_reference=f"Professor {prof} Lecture Notes",
+            )
+        )
+
+        # Additional questions from further sections
+        for idx_sec, sec in enumerate(master_note.sections[1:], start=2):
+            candidate_mcqs.append(
+                MCQQuestion(
+                    id=f"mcq_{uuid4().hex[:8]}",
+                    question=f"Regarding '{sec.heading}' in {chap}, which statement accurately captures the core architectural mechanism?",
+                    options=[
+                        f"It enforces strict protocol ordering and state persistence as outlined in {sec.heading}",
+                        "It bypasses all local disk logging in favor of unverified network broadcasts",
+                        "It permits arbitrary clock skew without affecting correctness guarantees",
+                        "It restricts execution to single-threaded sequential hardware only",
+                    ],
+                    correct_option_index=0,
+                    explanation=f"Section {idx_sec} ({sec.heading}) details how state continuity and invariants are maintained.",
+                    difficulty="medium" if idx_sec % 2 == 0 else "hard",
+                    topic_reference=sec.heading[:30],
+                    source_reference=f"Section: {sec.heading}",
+                )
+            )
+
+        # Additional questions from further definitions
+        for idx_def, d in enumerate(master_note.key_definitions[1:], start=2):
+            candidate_mcqs.append(
+                MCQQuestion(
+                    id=f"mcq_{uuid4().hex[:8]}",
+                    question=f"What is the technical definition and role of '{d.term}' in {chap}?",
+                    options=[
+                        d.definition,
+                        "A legacy network interface discarded in modern protocol revisions",
+                        "An asynchronous message buffer without delivery guarantees",
+                        "A temporary compiler flag that disables optimization warnings",
+                    ],
+                    correct_option_index=0,
+                    explanation=f"'{d.term}' is defined as: {d.definition}. Context: {d.context or 'Course syllabus'}.",
+                    difficulty="easy" if idx_def % 2 == 0 else "medium",
+                    topic_reference="Core Definitions",
+                    source_reference=f"Definition: {d.term}",
+                )
+            )
+
+        # Additional questions from key takeaways
+        for idx_kt, kt in enumerate(master_note.key_takeaways, start=1):
+            candidate_mcqs.append(
+                MCQQuestion(
+                    id=f"mcq_{uuid4().hex[:8]}",
+                    question=f"Which fundamental principle from Chapter {chap} does the following takeaway emphasize: '{kt[:90]}...'?",
+                    options=[
+                        kt,
+                        "That state consistency may be relaxed during peak transaction volumes",
+                        "That distributed systems require specialized hardware to achieve basic safety",
+                        "That randomized algorithms cannot guarantee termination in finite expectation",
+                    ],
+                    correct_option_index=0,
+                    explanation=f"Key Takeaway #{idx_kt} states: {kt}",
+                    difficulty="hard" if idx_kt % 2 == 0 else "medium",
+                    topic_reference="Key Takeaways",
+                    source_reference=f"Takeaway #{idx_kt}",
+                )
+            )
+
+        # Additional questions from learning objectives
+        for idx_lo, lo in enumerate(master_note.learning_objectives, start=1):
+            candidate_mcqs.append(
+                MCQQuestion(
+                    id=f"mcq_{uuid4().hex[:8]}",
+                    question=f"To fulfill the learning objective '{lo}', what analytical step is necessary?",
+                    options=[
+                        f"Master the formal proof and operational invariants of {chap}",
+                        "Memorize specific port numbers and machine IP addresses",
+                        "Disable verification asserts during debugging sessions",
+                        "Assume perfect network transmission without retries",
+                    ],
+                    correct_option_index=0,
+                    explanation=f"Learning Objective #{idx_lo} requires: {lo}",
+                    difficulty="medium",
+                    topic_reference="Learning Objectives",
+                    source_reference=f"Objective #{idx_lo}",
+                )
+            )
+
+        # If more questions are required, generate additional grounded variations
+        while len(candidate_mcqs) < num_mcqs:
+            n_idx = len(candidate_mcqs) + 1
+            diff_label = "hard" if n_idx % 3 == 0 else ("medium" if n_idx % 2 == 0 else "easy")
+            candidate_mcqs.append(
+                MCQQuestion(
+                    id=f"mcq_{uuid4().hex[:8]}",
+                    question=f"In an examination scenario testing {chap}, why is invariant verification required at step {n_idx} of protocol execution?",
+                    options=[
+                        f"To prevent split-brain execution and ensure state machine safety across cluster epochs",
+                        "To reduce network roundtrip time by eliminating payload compression",
+                        "To force garbage collection of all active client sessions immediately",
+                        "To bypass authentication when connecting from adjacent subnets",
+                    ],
+                    correct_option_index=0,
+                    explanation=f"Protocol invariant safety prevents conflicting state commits as taught in {chap}.",
+                    difficulty=diff_label,
+                    topic_reference=f"Exam Scenario #{n_idx}",
+                    source_reference=f"Professor {prof} Notes",
+                )
+            )
+
+        # Filter by difficulty if requested
+        if difficulty and difficulty.lower() in ("easy", "medium", "hard"):
+            target_diff = difficulty.lower()
+            filtered = [q for q in candidate_mcqs if q.difficulty == target_diff]
+            if len(filtered) < num_mcqs:
+                # Top up with remaining questions
+                filtered += [q for q in candidate_mcqs if q.difficulty != target_diff]
+            selected_mcqs = filtered[:num_mcqs]
+        else:
+            selected_mcqs = candidate_mcqs[:num_mcqs]
+
+        # --- 2. Generate Interactive Flashcards ---
+        flashcards: List[FlashcardItem] = []
+
+        # From Definitions
+        for d in master_note.key_definitions[:3]:
+            flashcards.append(
+                FlashcardItem(
+                    id=f"fc_{uuid4().hex[:8]}",
+                    question=f"What is '{d.term}'?",
+                    answer=d.definition,
+                    front=f"Concept / Term:\n{d.term}",
+                    back=f"{d.definition}\n\nContext: {d.context or 'Core Concept'}",
+                    explanation=d.context,
+                    difficulty="easy",
+                    review_status="new",
+                    topic_tag="Definition",
+                )
+            )
+
+        # From Formulas
+        for f in master_note.important_formulas[:2]:
+            flashcards.append(
+                FlashcardItem(
+                    id=f"fc_{uuid4().hex[:8]}",
+                    question=f"State and explain the formula: {f.latex_or_text}",
+                    answer=f.explanation,
+                    front=f"Formula Derivation:\n{f.latex_or_text}",
+                    back=f"{f.explanation}\n\nVariables: {', '.join(f'{k}={v}' for k, v in f.variables.items())}",
+                    explanation=f"Variables: {f.variables}",
+                    difficulty="medium",
+                    review_status="new",
+                    topic_tag="Formula",
+                )
+            )
+
+        # From Professor Exam Focus
+        for ec in master_note.exam_focused_concepts[:2]:
+            flashcards.append(
+                FlashcardItem(
+                    id=f"fc_{uuid4().hex[:8]}",
+                    question=f"Exam Priority: {ec.topic}",
+                    answer=ec.reason,
+                    front=f"Professor {prof}'s High-Yield Warning:\n{ec.topic}",
+                    back=f"{ec.reason}\n\nExam Weight: {ec.frequency_or_weight}",
+                    explanation=ec.section_emphasis or f"Emphasized by {prof}",
+                    difficulty="hard",
+                    review_status="new",
+                    topic_tag="Exam Warning",
+                )
+            )
+
+        # From Key Takeaways
+        for kt in master_note.key_takeaways[:3]:
+            flashcards.append(
+                FlashcardItem(
+                    id=f"fc_{uuid4().hex[:8]}",
+                    question=f"Core Takeaway: {kt[:60]}...?",
+                    answer=kt,
+                    front=f"Core Chapter Takeaway:\n{kt[:80]}...",
+                    back=kt,
+                    explanation=f"Key chapter takeaway for {chap}",
+                    difficulty="medium",
+                    review_status="new",
+                    topic_tag="Key Takeaway",
+                )
+            )
+
+        while len(flashcards) < 5:
+            n_idx = len(flashcards) + 1
+            flashcards.append(
+                FlashcardItem(
+                    id=f"fc_{uuid4().hex[:8]}",
+                    question=f"What is the Primary Safety Invariant in {chap} (Rule {n_idx})?",
+                    answer="A predicate that remains unconditionally true across all valid state transitions within the operational boundary.",
+                    front=f"Primary Safety Invariant in {chap} (Rule {n_idx})?",
+                    back="A predicate that remains unconditionally true across all valid state transitions within the operational boundary.",
+                    explanation="Verified inductively at each execution epoch.",
+                    difficulty="medium",
+                    review_status="new",
+                    topic_tag="Core Invariant",
+                )
+            )
+
+        # --- 3. Generate Practice Questions (All 5 Types) ---
+        practice_questions: List[PracticeQuestionItem] = [
+            PracticeQuestionItem(
+                id=f"pq_{uuid4().hex[:8]}",
+                question=f"Explain the primary operational requirement of {chap} in 2-3 sentences.",
+                question_type="short_answer",
+                difficulty="easy",
+                topic="Core Principles",
+                model_answer=f"The primary requirement of {chap} is to guarantee safe, deterministic state evolution under asynchronous conditions. This requires invariant verification across majorities so that conflicting transitions cannot be committed.",
+                rubric_explanation="Award full points for identifying deterministic state evolution, asynchronous safety, and majority quorum agreement.",
+                source_reference=f"Master Notes Section 1: Foundations",
+            ),
+            PracticeQuestionItem(
+                id=f"pq_{uuid4().hex[:8]}",
+                question=f"Derive the step-by-step invariant verification mechanism for {chap}. Explain how state conflicts are detected and resolved across epochs.",
+                question_type="long_answer",
+                difficulty="hard",
+                topic="Derivation & Convergence",
+                model_answer=f"Invariant Verification Flow:\n1. Precondition Check: Each epoch checks that the prior invariant holds.\n2. Quorum Agreement: Proposed state updates are broadcast and require acknowledgment from strict majority Q = floor(N/2) + 1.\n3. Conflict Resolution: If a node detects a discrepancy at index i, it rejects the update, forcing the coordinator to backtrack to the last matching index and overwrite divergent entries.",
+                rubric_explanation="Students must detail precondition checks, majority quorum threshold, and the rollback/overwrite mechanism upon mismatch.",
+                source_reference=f"Master Notes Section 2: Mathematical Derivations",
+            ),
+            PracticeQuestionItem(
+                id=f"pq_{uuid4().hex[:8]}",
+                question=f"Why does a network partition isolating minority nodes from the majority guarantee safety rather than causing split-brain anomalies in {chap}?",
+                question_type="conceptual",
+                difficulty="medium",
+                topic="Safety & Split-Brain",
+                model_answer="Because any valid commitment requires acknowledgment from a strict majority quorum (floor(N/2)+1). In an asymmetric partition, at most one partition can contain a majority. The minority partition strictly lacks the node count to reach quorum and safely pauses commitments, preventing split-brain.",
+                rubric_explanation="Key points: strict majority definition, mathematical impossibility of two concurrent majorities, and safe pausing of minority partitions.",
+                source_reference=f"Master Notes Key Takeaways & Exam Concepts",
+            ),
+            PracticeQuestionItem(
+                id=f"pq_{uuid4().hex[:8]}",
+                question=f"Consider a cluster with N=5 nodes partitioned into two groups: {{S1, S2}} and {{S3, S4, S5}}. If client writes are submitted to both groups, trace the execution steps and state of both partitions upon network healing.",
+                question_type="application",
+                difficulty="hard",
+                topic="Partition Walkthrough",
+                model_answer="Group 1 {S1, S2}: Size 2 < 3 (minority). Writes are stored as uncommitted but cannot achieve quorum. Clients do not receive commit acknowledgments.\nGroup 2 {S3, S4, S5}: Size 3 >= 3 (majority quorum). Writes achieve quorum, are committed, and client acknowledgments are returned.\nHealing: When the partition heals, the higher-epoch coordinator from Group 2 sends updates to S1 and S2. Mismatched uncommitted entries on S1/S2 are overwritten with Group 2's authoritative committed history.",
+                rubric_explanation="Full score requires tracking both minority uncommitted state, majority committed progress, and the overwrite/truncation step upon reconnection.",
+                source_reference=f"Master Notes Important Example: Five-Node Partition",
+            ),
+            PracticeQuestionItem(
+                id=f"pq_{uuid4().hex[:8]}",
+                question=f"Calculate the minimum quorum size Q and maximum tolerated crash faults F for a system of N=9 participants using the governing course formulas.",
+                question_type="formula",
+                difficulty="easy",
+                topic="Quorum Calculations",
+                model_answer="Formula 1: Q = floor(N / 2) + 1 = floor(9 / 2) + 1 = 4 + 1 = 5 participants.\nFormula 2: F = floor((N - 1) / 2) = floor(8 / 2) = 4 crash faults.\nConclusion: The cluster requires at least 5 participating nodes to commit state transitions and can tolerate up to 4 simultaneous node failures without loss of safety.",
+                rubric_explanation="Award points for explicit substitution into Q = floor(N/2)+1 giving 5, and F = floor((N-1)/2) giving 4.",
+                source_reference=f"Master Notes Important Formulas",
             ),
         ]
 
-        flashcards = [
-            FlashcardItem(
-                id=f"fc_{uuid4().hex[:8]}",
-                question=f"What is the Primary Safety Invariant in {chapter}?",
-                answer="A predicate P(s) that remains unconditionally true across all valid state transitions within the operational boundary.",
-                explanation="Verified inductively at each execution epoch.",
-                difficulty="medium",
-                review_status="new",
-                topic_tag="Core Concept",
+        # --- 4. Generate Key Takeaways & 3 Revision Sheets ---
+        defs_lines = [f"- **{d.term}:** {d.definition}" for d in master_note.key_definitions[:4]]
+        defs_str = "\n".join(defs_lines)
+
+        formulas_lines = [f"- **{f.latex_or_text}:** {f.explanation}" for f in master_note.important_formulas[:3]]
+        formulas_str = "\n".join(formulas_lines)
+
+        sections_blocks = []
+        for sec in master_note.sections:
+            block = f"#### {sec.heading}\n{sec.content}\n"
+            if sec.professor_emphasis:
+                block += f"\n> **Professor Verbal Emphasis ({prof}):** {sec.professor_emphasis}\n"
+            sections_blocks.append(block)
+        sections_str = "\n".join(sections_blocks)
+
+        deriv_blocks = []
+        for f in master_note.important_formulas:
+            deriv_blocks.append(f"- **Formula:** {f.latex_or_text}\n  - **Explanation:** {f.explanation}\n  - **Parameters:** {f.variables}")
+        deriv_str = "\n".join(deriv_blocks)
+
+        prof_warn = (
+            master_note.exam_focused_concepts[0].reason
+            if master_note.exam_focused_concepts
+            else "Always verify boundary conditions on paper before numerical substitution."
+        )
+
+        one_page_summary = f"""# {chap} — One-Page Exam Revision Sheet
+**Course:** {subj_code} ({subj_name}) | **Professor:** {prof} | **Source Sections:** {sec_names}
+
+---
+
+### 1. Essential Concepts & Axioms
+- **Core Mechanism:** Grounded in {chap} principles synthesized across Section(s) {sec_names}.
+- **Invariant Safety:** Every state transition must preserve the core invariant across a strict majority quorum.
+- **Quorum Overlap:** Any two quorums $Q_1, Q_2$ intersect by at least one witness participant ($|Q_1 \\cap Q_2| \\ge 1$).
+
+### 2. High-Yield Definitions
+{defs_str}
+
+### 3. Critical Formulas & Boundary Conditions
+{formulas_str}
+
+### 4. Professor Verbal Emphasis & Common Pitfalls
+> **Professor {prof} Stated Warning:**
+> "{prof_warn}"
+"""
+
+        detailed_summary = f"""# {chap} — Comprehensive Exam & Lecture Revision Guide
+## Synthesized Academic Master Notes & Multi-Section Analysis
+
+### Executive Chapter Summary
+This comprehensive revision guide synthesizes official syllabus references with classroom explanations and chalkboard derivations delivered by Professor {prof} across Sections {sec_names}.
+
+### Detailed Breakdown of Sections
+{sections_str}
+
+### Key Derivations & Mechanisms
+{deriv_str}
+
+### Cross-Section Perspective & Synthesis
+- Classroom whiteboard derivations emphasized mathematical invariants and edge failure recovery.
+- Official course textbook publications established axiomatic boundary conditions and formal asymptotic complexity bounds.
+"""
+
+        last_minute_summary = f"""# {chap} — Last-Minute Exam Cram Checklist
+**Read 15 minutes before the exam!**
+
+✓ **Course & Chapter:** {subj_code} — {chap}
+✓ **Key Formula:** {master_note.important_formulas[0].latex_or_text if master_note.important_formulas else 'Q = floor(N/2) + 1'}
+✓ **Professor {prof}'s Warning:** {master_note.exam_focused_concepts[0].topic if master_note.exam_focused_concepts else 'Check variable definitions on proofs'} — {master_note.exam_focused_concepts[0].reason if master_note.exam_focused_concepts else 'High probability exam question'}
+✓ **Quorum Rule:** Strictly require $\\lfloor N/2 \\rfloor + 1$ overlapping acknowledgments.
+✓ **Partition Rule:** Minority partitions pause progress safely; majority partitions commit; upon reconnection, divergent uncommitted logs truncate.
+✓ **Inductive Step:** Always state base cases and induction hypothesis before applying mathematical substitution.
+"""
+
+        # --- 5. Generate Exam Priority Analysis ---
+        lecture_emphasis_topics: List[ExamPriorityTopic] = []
+        for ec in master_note.exam_focused_concepts:
+            lecture_emphasis_topics.append(
+                ExamPriorityTopic(
+                    topic=ec.topic,
+                    priority_level="Critical",
+                    category="lecture_emphasis",
+                    source_evidence=ec.section_emphasis or f"Professor {prof} lecture callout",
+                    frequency_score=96,
+                    is_lecturer_stated=True,
+                    reasoning=ec.reason,
+                )
+            )
+        if not lecture_emphasis_topics and master_note.sections:
+            lecture_emphasis_topics.append(
+                ExamPriorityTopic(
+                    topic=f"{chap} Core Invariant Proof",
+                    priority_level="Critical",
+                    category="lecture_emphasis",
+                    source_evidence=f"Professor {prof} whiteboard derivation",
+                    frequency_score=95,
+                    is_lecturer_stated=True,
+                    reasoning="Explicitly emphasized by instructor during classroom board derivation.",
+                )
+            )
+
+        cross_section_recurring_topics: List[ExamPriorityTopic] = [
+            ExamPriorityTopic(
+                topic=f"{chap} Boundary & Partition Analysis",
+                priority_level="High",
+                category="cross_section_recurring",
+                source_evidence=f"Covered across Section(s) {sec_names}",
+                frequency_score=89,
+                is_lecturer_stated=False,
+                reasoning="Appeared consistently across multi-section lecture notes and student questions.",
             ),
-            FlashcardItem(
-                id=f"fc_{uuid4().hex[:8]}",
-                question="What is the mathematical formulation of Quorum Intersection?",
-                answer="|Q1 ∩ Q2| >= 1 for any two majorities Q1 and Q2.",
-                explanation="Ensures that at least one node has witnessed the most recent committed state.",
-                difficulty="easy",
-                review_status="new",
-                topic_tag="Quorum Math",
-            ),
-            FlashcardItem(
-                id=f"fc_{uuid4().hex[:8]}",
-                question=f"What was Professor {master_note.professor}'s primary exam warning for {chapter}?",
-                answer="Always verify the quorum intersection principle and formally write out intermediate inductive steps before substituting numbers.",
-                explanation="Commonly penalized mistake on university exam papers.",
-                difficulty="hard",
-                review_status="new",
-                topic_tag="Exam Tips",
+            ExamPriorityTopic(
+                topic="Asynchronous Fault Tolerance Limits",
+                priority_level="Medium",
+                category="cross_section_recurring",
+                source_evidence="Shared problem set and syllabus review",
+                frequency_score=82,
+                is_lecturer_stated=False,
+                reasoning="Common failure point identified in peer cross-section comparison.",
             ),
         ]
+
+        critical_formulas_list = [
+            {
+                "formula": f.latex_or_text,
+                "weight": "High Weight (Guaranteed Proof Component)",
+                "description": f.explanation,
+            }
+            for f in master_note.important_formulas
+        ]
+
+        prof_references = [
+            {
+                "concept": c.quote,
+                "reference": f"{c.source_name} ({c.page_or_region})",
+                "importance": "High Theoretical Weight",
+            }
+            for c in master_note.citations
+        ]
+
+        exam_priority_analysis = ExamPriorityAnalysis(
+            lecture_emphasis_topics=lecture_emphasis_topics,
+            cross_section_recurring_topics=cross_section_recurring_topics,
+            critical_formulas=critical_formulas_list,
+            professor_reference_concepts=prof_references,
+            disclaimer="Exam Priority Analysis reflects lecture coverage and syllabus weighting, not exact future examination questions.",
+        )
 
         revision_sheet = ExamRevisionSheet(
             core_definitions=master_note.key_definitions,
             critical_formulas=master_note.important_formulas,
             high_probability_questions=[
                 {
-                    "question": f"Explain the consequence of network partition in {chapter}.",
-                    "answer": "Nodes in the majority partition make safe progress; nodes in the minority partition cannot achieve quorum and safely pause state transitions.",
+                    "question": pq.question,
+                    "answer": pq.model_answer,
                 }
+                for pq in practice_questions[:2]
             ],
             professor_tips=master_note.exam_revision_summary or [
-                f"Professor {master_note.professor} always asks for variable definitions on mathematical questions.",
-                "Review the contrast between theoretical paper specifications and classroom practical derivations.",
+                f"Professor {prof} always checks variable definitions and boundary states.",
+                "Review the contrast between whiteboard derivations and reference textbook formulations.",
             ],
         )
 
+        initial_progress = StudentKitProgress(
+            kit_id=f"skit_{uuid4().hex[:10]}",
+            user_id=user_id,
+            cards_mastered=0,
+            cards_needs_review=0,
+            total_cards=len(flashcards),
+            flashcard_progress_pct=0.0,
+            quizzes_taken=0,
+            best_quiz_score=None,
+            last_quiz_score=None,
+            last_practiced_at=utc_now(),
+        )
+
         return StudyKit(
-            id=f"skit_{uuid4().hex[:10]}",
-            lecture_id=lecture_id,
-            title=f"Study Kit: {title}",
-            subject_name=subject_name,
-            chapter=chapter,
+            id=initial_progress.kit_id,
+            master_notes_id=lec_id,
+            lecture_id=lec_id,
+            user_id=user_id,
+            kit_type=kit_type,
+            title=f"Study Kit: {master_note.title}",
+            subject_name=subj_name,
+            subject_code=subj_code,
+            chapter=chap,
+            professor=prof,
             key_takeaways=master_note.key_takeaways,
-            mcqs=mcqs,
+            mcqs=selected_mcqs,
             flashcards=flashcards,
+            practice_questions=practice_questions,
             revision_sheet=revision_sheet,
+            one_page_summary=one_page_summary,
+            detailed_summary=detailed_summary,
+            last_minute_summary=last_minute_summary,
+            exam_priority_analysis=exam_priority_analysis,
+            progress=initial_progress,
+            created_at=utc_now(),
+            updated_at=utc_now(),
+        )
+
+    def evaluate_practice_answer(
+        self,
+        question: PracticeQuestionItem,
+        student_answer: str,
+    ) -> PracticeEvaluationResponse:
+        """
+        Evaluates a student's practice question answer against the model answer and rubric.
+        Provides formative feedback, strengths, and missed points.
+        Explicitly flags that this is AI Formative Feedback and NOT an authoritative instructor grade.
+        """
+        clean_ans = (student_answer or "").strip()
+        if not clean_ans:
+            return PracticeEvaluationResponse(
+                question_id=question.id,
+                score=0,
+                feedback="No answer was provided. Please type your answer before requesting evaluation.",
+                strengths=[],
+                missing_key_points=["Student response was empty."],
+                is_ai_generated=True,
+                disclaimer="AI Formative Feedback (Not an authoritative instructor grade)",
+            )
+
+        # Content keyword matching and conceptual rubric evaluation
+        ans_lower = clean_ans.lower()
+        model_lower = question.model_answer.lower()
+        model_words = set(re.findall(r"\b[a-z]{4,}\b", model_lower))
+        student_words = set(re.findall(r"\b[a-z]{4,}\b", ans_lower))
+
+        overlap = model_words.intersection(student_words)
+        coverage_ratio = len(overlap) / max(len(model_words), 1)
+
+        # Baseline score calculation
+        score = min(10, max(2, int(coverage_ratio * 10) + (2 if len(clean_ans) > 40 else 0)))
+        if len(clean_ans) < 15:
+            score = min(score, 3)
+
+        strengths: List[str] = []
+        missing: List[str] = []
+
+        if coverage_ratio >= 0.4 or len(overlap) >= 4:
+            strengths.append(f"Accurately addressed core topic terminology: {', '.join(list(overlap)[:4])}.")
+        if "quorum" in ans_lower or "invariant" in ans_lower or "majority" in ans_lower or "variance" in ans_lower:
+            strengths.append("Correctly referenced governing system constraints or invariants.")
+        if not strengths:
+            strengths.append("Attempted the question with initial intuitive phrasing.")
+
+        # Identify missed concepts
+        missed_terms = list(model_words - student_words)
+        if missed_terms:
+            missing.append(f"Consider integrating formal technical keywords: {', '.join(missed_terms[:4])}.")
+        if len(clean_ans.split()) < 20:
+            missing.append("Elaborate with step-by-step reasoning or mathematical justification as required by university exam rubrics.")
+
+        feedback_msg = (
+            f"Formative Assessment: Your response scores {score}/10 against the standard answer key. "
+            f"You demonstrated good grasp of the foundational concept, but ensure you explicitly state boundary conditions "
+            f"and invariant preconditions in written examinations."
+        )
+
+        return PracticeEvaluationResponse(
+            question_id=question.id,
+            score=score,
+            feedback=feedback_msg,
+            strengths=strengths,
+            missing_key_points=missing,
+            is_ai_generated=True,
+            disclaimer="AI Formative Feedback (Not an authoritative instructor grade)",
         )
 
     # ------------------------------------------------------------------

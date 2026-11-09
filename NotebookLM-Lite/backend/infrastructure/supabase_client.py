@@ -227,10 +227,22 @@ class SupabaseStorageManager:
             raise ValueError(f"Invalid storage bucket '{bucket}'. Allowed: {self.REQUIRED_BUCKETS}")
         return bucket
 
+    def _resolve_secure_path(self, bucket: str, storage_path: str) -> Tuple[str, Path]:
+        """Resolves target path while strictly preventing directory traversal attacks."""
+        self.validate_bucket(bucket)
+        normalized = storage_path.replace("\\", "/").strip().lstrip("/")
+        segments = normalized.split("/")
+        if any(seg in ("..", ".") for seg in segments):
+            raise PermissionError("Path traversal attack detected: Invalid path traversal segment.")
+        bucket_dir = (self.storage_root / bucket).resolve()
+        target = (bucket_dir / normalized).resolve()
+        if not (target == bucket_dir or bucket_dir in target.parents):
+            raise PermissionError("Path traversal attack detected: Target path escapes storage bucket.")
+        return normalized, target
+
     def check_rls_upload_permission(self, bucket: str, storage_path: str, user_id: str) -> None:
         """Enforces storage.objects INSERT RLS policy: first path segment must be user_id."""
-        self.validate_bucket(bucket)
-        clean_path = storage_path.lstrip("/")
+        clean_path, _ = self._resolve_secure_path(bucket, storage_path)
         first_folder = clean_path.split("/")[0] if "/" in clean_path else ""
         if first_folder != user_id:
             raise PermissionError(
@@ -246,11 +258,10 @@ class SupabaseStorageManager:
         visibility: str = "private",
     ) -> None:
         """Enforces storage.objects SELECT RLS policy across private and shared buckets."""
-        self.validate_bucket(bucket)
+        clean_path, _ = self._resolve_secure_path(bucket, storage_path)
         if not requesting_user_id:
             raise PermissionError("RLS Policy Violation: Authentication required to access storage objects.")
 
-        clean_path = storage_path.lstrip("/")
         path_owner = owner_user_id or (clean_path.split("/")[0] if "/" in clean_path else "")
 
         if bucket == StorageBucketType.PRIVATE_UPLOADS.value:
@@ -304,9 +315,8 @@ class SupabaseStorageManager:
     ) -> str:
         """Stores file bytes in the specified Supabase Storage bucket with RLS verification."""
         self.check_rls_upload_permission(bucket, storage_path, user_id)
-        clean_path = storage_path.lstrip("/")
+        clean_path, dest_file = self._resolve_secure_path(bucket, storage_path)
 
-        dest_file = self.storage_root / bucket / clean_path
         dest_file.parent.mkdir(parents=True, exist_ok=True)
         dest_file.write_bytes(content)
 
@@ -332,12 +342,11 @@ class SupabaseStorageManager:
     def delete_object(self, bucket: str, storage_path: str, user_id: str) -> bool:
         """Deletes a file from storage after enforcing ownership RLS."""
         self.validate_bucket(bucket)
-        clean_path = storage_path.lstrip("/")
+        clean_path, target = self._resolve_secure_path(bucket, storage_path)
         first_folder = clean_path.split("/")[0] if "/" in clean_path else ""
         if first_folder != user_id:
             raise PermissionError("RLS Policy Violation: Users can only delete their own files.")
 
-        target = self.storage_root / bucket / clean_path
         if target.exists():
             target.unlink()
             return True
@@ -422,8 +431,7 @@ class SupabaseStorageManager:
             requesting_user_id=requesting_user_id,
             visibility="shared" if is_shared_authorized else "private",
         )
-        clean_path = storage_path.lstrip("/")
-        target = self.storage_root / bucket / clean_path
+        clean_path, target = self._resolve_secure_path(bucket, storage_path)
         if not target.exists():
             raise FileNotFoundError(f"Object '{clean_path}' not found in bucket '{bucket}'")
         return target

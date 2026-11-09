@@ -3,7 +3,7 @@ Document Domain Models
 
 Core data structures for document processing and storage.
 """
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 from enum import Enum
@@ -27,8 +27,8 @@ class DocumentChunk(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict, description="元数据")
     embedding: Optional[List[float]] = Field(None, description="向量嵌入")
     
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "id": "doc123_chunk_0",
                 "doc_id": "doc123",
@@ -37,6 +37,7 @@ class DocumentChunk(BaseModel):
                 "metadata": {"page": 1, "source": "intro"}
             }
         }
+    )
 
 
 class ProcessedDocument(BaseModel):
@@ -59,8 +60,8 @@ class ProcessedDocument(BaseModel):
         """总字符数"""
         return len(self.full_text)
     
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "id": "doc123",
                 "filename": "research_paper.pdf",
@@ -70,3 +71,4 @@ class ProcessedDocument(BaseModel):
                 "metadata": {"author": "张三", "pages": 10}
             }
         }
+    )

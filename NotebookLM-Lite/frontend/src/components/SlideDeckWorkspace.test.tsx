@@ -185,7 +185,7 @@ describe('SlideDeckWorkspace', () => {
         });
         vi.stubGlobal('fetch', fetchMock);
 
-        render(<App />);
+        renderWorkspace();
 
         expect(await screen.findByText('Slide Deck 工作区')).toBeInTheDocument();
         expect(fetchMock).toHaveBeenCalledWith('/api/slide-decks/deck_1', undefined);

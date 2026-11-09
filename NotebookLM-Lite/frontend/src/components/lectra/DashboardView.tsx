@@ -1,42 +1,27 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import {
     Sparkles,
     UploadCloud,
     BookOpen,
-    ShieldCheck,
     Download,
     ArrowRight,
-    Users,
     FileText,
-    Calendar,
-    Layers,
     CheckCircle2,
-    Eye,
+    Calendar,
+    ChevronRight,
     GraduationCap,
-    BookMarked,
-    FolderLock,
-    HardDrive,
-    Lock,
-    Globe,
-    Plus,
-    Trash2,
-    Search,
-    Link2,
+    Clock,
 } from 'lucide-react';
 import {
     DashboardMetrics,
     MasterNoteContent,
     ProfessorProfile,
     SectionId,
-    SourceMaterialType,
-    StorageBucketType,
     SubjectModel,
     UploadedSourceItem,
     UserProfile,
-    VisibilityType,
     WorkspaceModel,
 } from '../../types/lectra';
-import { lectraApi } from '../../services/lectraApi';
 
 interface DashboardViewProps {
     userProfile: UserProfile;
@@ -50,6 +35,7 @@ interface DashboardViewProps {
     onOpenStudio: (initialUploadMode?: 'whiteboard' | 'pdf') => void;
     onOpenVault: () => void;
     onOpenStudyKit: (lectureId?: string) => void;
+    onOpenChat?: () => void;
     onViewMasterNote: (note: MasterNoteContent) => void;
     onDownloadNote: (lectureId: string, format: 'pdf' | 'docx' | 'markdown') => void;
     onSelectSubject?: (subject: SubjectModel) => void;
@@ -62,903 +48,342 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     metrics,
     subjects,
     recentNotes,
-    workspaces = [],
-    uploadHistory = [],
     currentSection,
     onOpenStudio,
     onOpenVault,
     onOpenStudyKit,
+    onOpenChat,
     onViewMasterNote,
     onDownloadNote,
     onSelectSubject,
-    onRefreshDashboard,
-    onNotify,
 }) => {
-    const [searchFilter, setSearchFilter] = useState('');
-    const [subjectFilter, setSubjectFilter] = useState<string>('ALL');
-    const [sectionFilter, setSectionFilter] = useState<string>('ALL');
-    const [localWorkspaces, setLocalWorkspaces] = useState<WorkspaceModel[]>(workspaces);
-    const [localUploads, setLocalUploads] = useState<UploadedSourceItem[]>(uploadHistory);
+    const [downloadingId, setDownloadingId] = useState<string | null>(null);
 
-    // Workspace creation state
-    const [showNewWorkspace, setShowNewWorkspace] = useState(false);
-    const [wsTitle, setWsTitle] = useState('');
-    const [wsSubjectId, setWsSubjectId] = useState(subjects[0]?.id || 'subj_cs244');
-    const [wsSection, setWsSection] = useState<SectionId>(currentSection);
-    const [wsVisibility, setWsVisibility] = useState<VisibilityType>('private');
-    const [wsCreating, setWsCreating] = useState(false);
+    const firstName = userProfile.full_name
+        ? userProfile.full_name.split(' ')[0]
+        : 'Student';
 
-    // Direct Supabase Storage Bucket upload state
-    const [selectedBucket, setSelectedBucket] = useState<StorageBucketType>('private-student-uploads');
-    const [selectedSourceType, setSelectedSourceType] = useState<SourceMaterialType>('whiteboard');
-    const [uploadingStorage, setUploadingStorage] = useState(false);
-    const [storageError, setStorageError] = useState<string | null>(null);
-
-    useEffect(() => {
-        setLocalWorkspaces(workspaces);
-    }, [workspaces]);
-
-    useEffect(() => {
-        if (uploadHistory && uploadHistory.length > 0) {
-            setLocalUploads(uploadHistory);
-        } else {
-            lectraApi
-                .listUploadedSources()
-                .then((items) => setLocalUploads(items))
-                .catch(() => {});
-        }
-    }, [uploadHistory]);
-
-    const filteredNotes = recentNotes.filter((n) => {
-        if (subjectFilter !== 'ALL' && n.subject_code !== subjectFilter) return false;
-        if (sectionFilter !== 'ALL' && n.section !== sectionFilter) return false;
-        if (
-            searchFilter.trim() &&
-            !n.title.toLowerCase().includes(searchFilter.toLowerCase()) &&
-            !n.chapter.toLowerCase().includes(searchFilter.toLowerCase()) &&
-            !n.subject_code.toLowerCase().includes(searchFilter.toLowerCase())
-        ) {
-            return false;
-        }
-        return true;
-    });
-
-    const filteredUploads = localUploads.filter((u) => {
-        if (!searchFilter.trim()) return true;
-        const fname = (u.file_name || u.original_filename || '').toLowerCase();
-        const snippet = (u.extracted_text_snippet || '').toLowerCase();
-        return fname.includes(searchFilter.toLowerCase()) || snippet.includes(searchFilter.toLowerCase());
-    });
-
-    const handleCreateWorkspace = async (e: React.FormEvent) => {
-        e.preventDefault();
-        if (!wsTitle.trim()) return;
-        setWsCreating(true);
-        try {
-            const res = await lectraApi.createWorkspace({
-                title: wsTitle.trim(),
-                name: wsTitle.trim(),
-                subject_id: wsSubjectId,
-                section: wsSection,
-                visibility: wsVisibility,
-                university: userProfile.university,
-                semester: userProfile.semester || 'Fall 2026',
-            });
-            setLocalWorkspaces((prev) => [res.workspace, ...prev]);
-            setWsTitle('');
-            setShowNewWorkspace(false);
-            if (onNotify) onNotify(`Workspace "${res.workspace.title || res.workspace.name}" created.`);
-            if (onRefreshDashboard) onRefreshDashboard();
-        } catch (err: any) {
-            setStorageError(err?.response?.data?.detail || 'Could not create workspace.');
-        } finally {
-            setWsCreating(false);
-        }
-    };
-
-    const handleDeleteWorkspace = async (wsId: string) => {
-        try {
-            await lectraApi.deleteWorkspace(wsId);
-            setLocalWorkspaces((prev) => prev.filter((w) => w.id !== wsId));
-            if (onNotify) onNotify('Workspace deleted.');
-            if (onRefreshDashboard) onRefreshDashboard();
-        } catch (err: any) {
-            setStorageError(err?.response?.data?.detail || 'RLS Policy: Only workspace owners can delete private workspaces.');
-        }
-    };
-
-    const handleDirectStorageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
-        if (!file) return;
-        setUploadingStorage(true);
-        setStorageError(null);
-        try {
-            const res = await lectraApi.uploadToStorageBucket({
-                file,
-                workspace_id: localWorkspaces[0]?.id || 'ws_main',
-                bucket: selectedBucket,
-                source_type: selectedSourceType,
-                visibility: selectedBucket === 'shared-academic-materials' ? 'section' : 'private',
-            });
-            setLocalUploads((prev) => [res.source, ...prev]);
-            if (onNotify) onNotify(`Uploaded "${file.name}" to Supabase bucket "${selectedBucket}".`);
-            if (onRefreshDashboard) onRefreshDashboard();
-        } catch (err: any) {
-            setStorageError(err?.response?.data?.detail || 'File upload failed.');
-        } finally {
-            setUploadingStorage(false);
-            e.target.value = '';
-        }
-    };
-
-    const handleOpenSignedUrl = async (src: UploadedSourceItem) => {
-        setStorageError(null);
-        try {
-            const bucket = (src.bucket_id || 'private-student-uploads') as StorageBucketType;
-            const path = src.storage_path || src.file_path;
-            const signed = await lectraApi.createSignedUrl(bucket, path, 3600);
-            window.open(signed.signed_url, '_blank', 'noopener,noreferrer');
-            if (onNotify) onNotify('Generated HMAC-SHA256 Signed URL (valid 1 hour).');
-        } catch (err: any) {
-            setStorageError(err?.response?.data?.detail || 'RLS Policy: Unauthorized access to private file.');
-        }
-    };
-
-    const handleDeleteSource = async (sourceId: string) => {
-        setStorageError(null);
-        try {
-            await lectraApi.deleteUploadedSource(sourceId);
-            setLocalUploads((prev) => prev.filter((s) => s.id !== sourceId));
-            if (onNotify) onNotify('Deleted uploaded file from Supabase Storage.');
-            if (onRefreshDashboard) onRefreshDashboard();
-        } catch (err: any) {
-            setStorageError(err?.response?.data?.detail || 'RLS Policy: Cannot delete another student’s file.');
-        }
-    };
     const formatDate = (isoString: string) => {
-        if (!isoString) return 'Oct 24, 2026';
+        if (!isoString) return 'Recent';
         try {
             const d = new Date(isoString);
             if (isNaN(d.getTime())) return isoString.slice(0, 10);
             return d.toLocaleDateString('en-US', {
                 month: 'short',
                 day: 'numeric',
-                year: 'numeric',
             });
         } catch {
-            return 'Oct 24, 2026';
+            return 'Recent';
         }
     };
 
+    // 4–6 most recent Master Notes
+    const displayNotes = recentNotes.slice(0, 6);
+
+    // 3 most active subjects
+    const displaySubjects = subjects.slice(0, 3);
+
+    const handleDownload = (e: React.MouseEvent, note: MasterNoteContent) => {
+        e.stopPropagation();
+        setDownloadingId(note.lecture_id);
+        onDownloadNote(note.lecture_id, 'pdf');
+        setTimeout(() => setDownloadingId(null), 1200);
+    };
+
     return (
-        <div className="space-y-8 pb-16 animate-fade-in">
-            {/* 1. Welcome Banner */}
-            <div className="rounded-2xl border border-slate-800 bg-[#0B132B] p-6 sm:p-8 text-white shadow-saas-md">
-                <div className="flex flex-col justify-between gap-6 md:flex-row md:items-center">
-                    <div className="space-y-2">
-                        <div className="inline-flex items-center space-x-2 rounded-md border border-indigo-500/30 bg-indigo-500/15 px-2.5 py-1 text-[11px] font-semibold text-indigo-300">
-                            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-                            <span>
-                                {userProfile.university} • Section {currentSection} Workspace
-                            </span>
-                        </div>
-                        <h1 className="font-display text-2xl font-bold tracking-tight sm:text-3xl text-white">
-                            Welcome back, {userProfile.full_name}
-                        </h1>
-                        <p className="text-sm text-slate-300">
-                            Your academic knowledge, organized in one place.
-                        </p>
-                    </div>
+        <div className="space-y-7 pb-12 animate-fade-in max-w-6xl mx-auto">
+            {/* 1. Compact Welcome Area */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 py-2 border-b border-slate-200/80 dark:border-slate-800">
+                <div>
+                    <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
+                        Welcome back, {firstName}
+                    </h1>
+                    <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-0.5">
+                        Your classroom knowledge, organized and ready to study.
+                    </p>
+                </div>
 
-                    <div className="flex flex-wrap items-center gap-3">
+                <div className="flex items-center gap-2.5 shrink-0">
+                    {onOpenChat && (
                         <button
                             type="button"
-                            onClick={() => onOpenStudio()}
-                            className="inline-flex items-center space-x-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-xs font-semibold text-white shadow-xs transition hover:bg-indigo-500"
+                            onClick={onOpenChat}
+                            className="inline-flex items-center space-x-1.5 rounded-lg border border-indigo-200 bg-indigo-50/70 dark:bg-indigo-950/40 dark:border-indigo-800 px-3 py-2 text-xs font-semibold text-indigo-700 dark:text-indigo-300 shadow-2xs transition hover:bg-indigo-100 dark:hover:bg-indigo-900/60 focus:outline-none"
                         >
-                            <Sparkles size={15} />
-                            <span>Generate Master Notes</span>
+                            <Sparkles size={14} className="text-indigo-600 dark:text-indigo-400" />
+                            <span>Notebook Chat</span>
                         </button>
-                        <button
-                            type="button"
-                            onClick={onOpenVault}
-                            className="inline-flex items-center space-x-2 rounded-lg border border-slate-700 bg-[#152042] px-4 py-2.5 text-xs font-semibold text-slate-200 transition hover:border-slate-600 hover:bg-slate-800"
-                        >
-                            <ShieldCheck size={15} />
-                            <span>Browse Section Vault</span>
-                        </button>
-                    </div>
-                </div>
-            </div>
-
-            {/* 2. Key Academic Statistics */}
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                <div className="rounded-xl border border-slate-200/90 bg-white p-5 shadow-saas transition hover:border-slate-300 dark:border-slate-800 dark:bg-slate-900">
-                    <div className="flex items-center justify-between">
-                        <span className="text-xs font-medium text-slate-500 dark:text-slate-400">
-                            Master Notes Generated
-                        </span>
-                        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600 dark:bg-indigo-950/60 dark:text-indigo-400">
-                            <FileText size={16} />
-                        </div>
-                    </div>
-                    <div className="mt-3 flex items-baseline justify-between">
-                        <span className="font-display text-2xl font-bold text-slate-900 dark:text-white">
-                            {metrics.total_master_notes}
-                        </span>
-                        <span className="inline-flex items-center text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
-                            <CheckCircle2 size={12} className="mr-1" />
-                            Verified
-                        </span>
-                    </div>
-                </div>
-
-                <div className="rounded-xl border border-slate-200/90 bg-white p-5 shadow-saas transition hover:border-slate-300 dark:border-slate-800 dark:bg-slate-900">
-                    <div className="flex items-center justify-between">
-                        <span className="text-xs font-medium text-slate-500 dark:text-slate-400">
-                            Uploaded Sources
-                        </span>
-                        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300">
-                            <UploadCloud size={16} />
-                        </div>
-                    </div>
-                    <div className="mt-3 flex items-baseline justify-between">
-                        <span className="font-display text-2xl font-bold text-slate-900 dark:text-white">
-                            {metrics.uploaded_sources}
-                        </span>
-                        <span className="text-[11px] font-medium text-slate-500">
-                            Whiteboards & PDFs
-                        </span>
-                    </div>
-                </div>
-
-                <div className="rounded-xl border border-slate-200/90 bg-white p-5 shadow-saas transition hover:border-slate-300 dark:border-slate-800 dark:bg-slate-900">
-                    <div className="flex items-center justify-between">
-                        <span className="text-xs font-medium text-slate-500 dark:text-slate-400">
-                            Study Kits Created
-                        </span>
-                        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600 dark:bg-indigo-950/60 dark:text-indigo-400">
-                            <BookOpen size={16} />
-                        </div>
-                    </div>
-                    <div className="mt-3 flex items-baseline justify-between">
-                        <span className="font-display text-2xl font-bold text-slate-900 dark:text-white">
-                            {metrics.available_study_kits}
-                        </span>
-                        <span className="text-[11px] font-medium text-indigo-600 dark:text-indigo-400">
-                            MCQs & Flashcards
-                        </span>
-                    </div>
-                </div>
-
-                <div className="rounded-xl border border-slate-200/90 bg-white p-5 shadow-saas transition hover:border-slate-300 dark:border-slate-800 dark:bg-slate-900">
-                    <div className="flex items-center justify-between">
-                        <span className="text-xs font-medium text-slate-500 dark:text-slate-400">
-                            Community Contributions
-                        </span>
-                        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 dark:bg-emerald-950/60 dark:text-emerald-400">
-                            <Users size={16} />
-                        </div>
-                    </div>
-                    <div className="mt-3 flex items-baseline justify-between">
-                        <span className="font-display text-2xl font-bold text-slate-900 dark:text-white">
-                            {metrics.community_contributions}
-                        </span>
-                        <span className="text-[11px] font-medium text-slate-500">
-                            {metrics.total_upvotes} peer upvotes
-                        </span>
-                    </div>
-                </div>
-            </div>
-
-            {/* 3. Quick Actions */}
-            <div>
-                <div className="mb-3 flex items-center justify-between">
-                    <h2 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                        Quick Actions
-                    </h2>
-                    <span className="text-[11px] font-medium text-slate-400">
-                        Core Studio & Vault Workflows
-                    </span>
-                </div>
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
-                    <button
-                        type="button"
-                        onClick={() => onOpenStudio('whiteboard')}
-                        className="group flex flex-col justify-between rounded-xl border border-slate-200/90 bg-white p-4 text-left shadow-saas transition hover:border-indigo-500/60 hover:shadow-saas-md dark:border-slate-800 dark:bg-slate-900"
-                    >
-                        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 text-[#0B132B] transition group-hover:bg-[#0B132B] group-hover:text-white dark:bg-slate-800 dark:text-slate-200">
-                            <UploadCloud size={17} />
-                        </div>
-                        <div className="mt-3.5">
-                            <div className="text-xs font-bold text-slate-900 dark:text-white">
-                                Upload Whiteboard
-                            </div>
-                            <div className="mt-0.5 text-[11px] text-slate-500">
-                                Digitize classroom board photos
-                            </div>
-                        </div>
-                    </button>
-
-                    <button
-                        type="button"
-                        onClick={() => onOpenStudio('pdf')}
-                        className="group flex flex-col justify-between rounded-xl border border-slate-200/90 bg-white p-4 text-left shadow-saas transition hover:border-indigo-500/60 hover:shadow-saas-md dark:border-slate-800 dark:bg-slate-900"
-                    >
-                        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600 transition group-hover:bg-indigo-600 group-hover:text-white dark:bg-indigo-950 dark:text-indigo-400">
-                            <FileText size={17} />
-                        </div>
-                        <div className="mt-3.5">
-                            <div className="text-xs font-bold text-slate-900 dark:text-white">
-                                Upload Reference PDF
-                            </div>
-                            <div className="mt-0.5 text-[11px] text-slate-500">
-                                Official textbooks & syllabi
-                            </div>
-                        </div>
-                    </button>
-
-                    <button
-                        type="button"
-                        onClick={() => onOpenStudio()}
-                        className="group flex flex-col justify-between rounded-xl border border-slate-200/90 bg-white p-4 text-left shadow-saas transition hover:border-indigo-500/60 hover:shadow-saas-md dark:border-slate-800 dark:bg-slate-900"
-                    >
-                        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600 transition group-hover:bg-indigo-600 group-hover:text-white dark:bg-indigo-950 dark:text-indigo-400">
-                            <Sparkles size={17} />
-                        </div>
-                        <div className="mt-3.5">
-                            <div className="text-xs font-bold text-slate-900 dark:text-white">
-                                Generate Master Notes
-                            </div>
-                            <div className="mt-0.5 text-[11px] text-slate-500">
-                                6-stage multimodal synthesis
-                            </div>
-                        </div>
-                    </button>
-
+                    )}
                     <button
                         type="button"
                         onClick={onOpenVault}
-                        className="group flex flex-col justify-between rounded-xl border border-slate-200/90 bg-white p-4 text-left shadow-saas transition hover:border-indigo-500/60 hover:shadow-saas-md dark:border-slate-800 dark:bg-slate-900"
+                        className="text-xs font-medium text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 transition flex items-center gap-1 px-1"
                     >
-                        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 transition group-hover:bg-emerald-600 group-hover:text-white dark:bg-emerald-950 dark:text-emerald-400">
-                            <ShieldCheck size={17} />
-                        </div>
-                        <div className="mt-3.5">
-                            <div className="text-xs font-bold text-slate-900 dark:text-white">
-                                Browse Section Vault
-                            </div>
-                            <div className="mt-0.5 text-[11px] text-slate-500">
-                                Compare Sections A through I
-                            </div>
-                        </div>
+                        <span>Section Vault</span>
+                        <ArrowRight size={13} />
                     </button>
-
                     <button
                         type="button"
-                        onClick={() => onOpenStudyKit()}
-                        className="group flex flex-col justify-between rounded-xl border border-slate-200/90 bg-white p-4 text-left shadow-saas transition hover:border-indigo-500/60 hover:shadow-saas-md dark:border-slate-800 dark:bg-slate-900"
+                        onClick={() => onOpenStudio()}
+                        className="inline-flex items-center space-x-1.5 rounded-lg bg-indigo-600 px-3.5 py-2 text-xs font-semibold text-white shadow-xs transition hover:bg-indigo-500 focus:outline-none"
                     >
-                        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 text-slate-700 transition group-hover:bg-indigo-600 group-hover:text-white dark:bg-slate-800 dark:text-slate-300">
-                            <BookOpen size={17} />
-                        </div>
-                        <div className="mt-3.5">
-                            <div className="text-xs font-bold text-slate-900 dark:text-white">
-                                Create Study Kit
-                            </div>
-                            <div className="mt-0.5 text-[11px] text-slate-500">
-                                MCQs, flashcards & exam sheets
-                            </div>
-                        </div>
+                        <Sparkles size={14} />
+                        <span>+ Create Master Notes</span>
                     </button>
                 </div>
             </div>
 
-            {/* 4. Subject Cards */}
-            <div>
-                <div className="mb-3 flex items-center justify-between">
-                    <h2 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                        Enrolled Subjects
-                    </h2>
-                    <span className="text-[11px] font-medium text-slate-400">
-                        Active in Section {currentSection}
-                    </span>
-                </div>
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-                    {subjects.map((subj) => (
-                        <div
-                            key={subj.id}
-                            onClick={() => onSelectSubject && onSelectSubject(subj)}
-                            className="group flex flex-col justify-between rounded-xl border border-slate-200/90 bg-white p-5 shadow-saas transition hover:border-indigo-400 hover:shadow-saas-md dark:border-slate-800 dark:bg-slate-900 cursor-pointer"
-                        >
-                            <div>
-                                <div className="flex items-center justify-between">
-                                    <span className="inline-flex items-center rounded-md bg-[#0B132B] px-2.5 py-0.5 font-mono text-[11px] font-semibold text-white dark:bg-indigo-600">
-                                        {subj.code}
-                                    </span>
-                                    <span className="inline-flex items-center space-x-1 rounded-md bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300">
-                                        <Layers size={11} />
-                                        <span>Section {currentSection}</span>
-                                    </span>
-                                </div>
-                                <h3 className="mt-3 font-display text-sm font-bold text-slate-900 group-hover:text-indigo-600 dark:text-white dark:group-hover:text-indigo-400 transition">
-                                    {subj.name}
-                                </h3>
-                                <p className="mt-1 text-xs text-slate-500 line-clamp-2 leading-relaxed">
-                                    {subj.description || 'Core departmental academic course.'}
-                                </p>
-                            </div>
-
-                            <div className="mt-5 space-y-2 border-t border-slate-100 pt-3.5 dark:border-slate-800 text-xs">
-                                <div className="flex items-center justify-between">
-                                    <span className="text-slate-500 flex items-center gap-1.5">
-                                        <GraduationCap size={13} className="text-slate-400" />
-                                        <span>Professor</span>
-                                    </span>
-                                    <span className="font-semibold text-slate-800 dark:text-slate-200">
-                                        {subj.teacher}
-                                    </span>
-                                </div>
-                                <div className="flex items-center justify-between">
-                                    <span className="text-slate-500 flex items-center gap-1.5">
-                                        <BookMarked size={13} className="text-slate-400" />
-                                        <span>Chapters</span>
-                                    </span>
-                                    <span className="font-semibold text-slate-800 dark:text-slate-200">
-                                        {subj.chapters_count} Chapters
-                                    </span>
-                                </div>
-                                <div className="flex items-center justify-between pt-0.5">
-                                    <span className="text-slate-500">Sections Enrolled</span>
-                                    <div className="flex space-x-1">
-                                        {subj.active_sections.slice(0, 5).map((sec) => (
-                                            <span
-                                                key={sec}
-                                                className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
-                                                    sec === currentSection
-                                                        ? 'bg-indigo-600 text-white'
-                                                        : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
-                                                }`}
-                                            >
-                                                {sec}
-                                            </span>
-                                        ))}
-                                        {subj.active_sections.length > 5 && (
-                                            <span className="text-[10px] font-medium text-slate-400 self-center">
-                                                +{subj.active_sections.length - 5}
-                                            </span>
-                                        )}
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    ))}
-                </div>
-            </div>
-
-            {/* 5. Recent Notes Table with Database Search & Filters */}
-            <div className="rounded-xl border border-slate-200/90 bg-white shadow-saas dark:border-slate-800 dark:bg-slate-900 overflow-hidden">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 px-6 py-4 dark:border-slate-800">
-                    <div>
-                        <h2 className="text-sm font-bold text-slate-900 dark:text-white">
-                            Recent Notes
-                        </h2>
-                        <p className="text-xs text-slate-500 mt-0.5">
-                            Verified Master Notes synthesized from classroom boards and professor references
+            {/* 2. Main 3-Step Guided Workflow */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <button
+                    type="button"
+                    onClick={() => onOpenStudio('whiteboard')}
+                    className="group relative flex flex-col text-left p-4 rounded-xl border border-slate-200/90 bg-white hover:border-indigo-300 hover:shadow-xs transition dark:border-slate-800 dark:bg-slate-900 dark:hover:border-slate-700"
+                >
+                    <div className="flex items-center justify-between w-full">
+                        <span className="flex h-6 w-6 items-center justify-center rounded-full bg-indigo-50 text-[11px] font-bold text-indigo-600 dark:bg-indigo-950 dark:text-indigo-400">
+                            1
+                        </span>
+                        <UploadCloud size={16} className="text-slate-400 group-hover:text-indigo-600 transition" />
+                    </div>
+                    <div className="mt-3">
+                        <h3 className="text-xs font-semibold text-slate-900 dark:text-white group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition">
+                            Upload Materials
+                        </h3>
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                            Photos of classroom whiteboards, slides, or reference PDFs
                         </p>
                     </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                        <div className="relative">
-                            <Search size={13} className="text-slate-400 absolute left-2.5 top-2.5" />
-                            <input
-                                type="search"
-                                value={searchFilter}
-                                onChange={(e) => setSearchFilter(e.target.value)}
-                                placeholder="Filter notes & files..."
-                                className="pl-7 pr-3 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-indigo-500"
-                            />
-                        </div>
-                        <select
-                            aria-label="Filter by subject"
-                            value={subjectFilter}
-                            onChange={(e) => setSubjectFilter(e.target.value)}
-                            className="px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg bg-white"
-                        >
-                            <option value="ALL">All Subjects</option>
-                            {subjects.map((s) => (
-                                <option key={s.id} value={s.code}>
-                                    {s.code}
-                                </option>
-                            ))}
-                        </select>
-                        <select
-                            aria-label="Filter by section"
-                            value={sectionFilter}
-                            onChange={(e) => setSectionFilter(e.target.value)}
-                            className="px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg bg-white"
-                        >
-                            <option value="ALL">All Sections (A–I)</option>
-                            {(['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I'] as SectionId[]).map((sec) => (
-                                <option key={sec} value={sec}>
-                                    Section {sec}
-                                </option>
-                            ))}
-                        </select>
+                </button>
+
+                <button
+                    type="button"
+                    onClick={() => onOpenStudio()}
+                    className="group relative flex flex-col text-left p-4 rounded-xl border border-slate-200/90 bg-white hover:border-indigo-300 hover:shadow-xs transition dark:border-slate-800 dark:bg-slate-900 dark:hover:border-slate-700"
+                >
+                    <div className="flex items-center justify-between w-full">
+                        <span className="flex h-6 w-6 items-center justify-center rounded-full bg-indigo-50 text-[11px] font-bold text-indigo-600 dark:bg-indigo-950 dark:text-indigo-400">
+                            2
+                        </span>
+                        <Sparkles size={16} className="text-slate-400 group-hover:text-indigo-600 transition" />
+                    </div>
+                    <div className="mt-3">
+                        <h3 className="text-xs font-semibold text-slate-900 dark:text-white group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition">
+                            Generate Master Notes
+                        </h3>
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                            AI synthesizes formulas, definitions, diagrams & proofs
+                        </p>
+                    </div>
+                </button>
+
+                <button
+                    type="button"
+                    onClick={() => onOpenStudyKit()}
+                    className="group relative flex flex-col text-left p-4 rounded-xl border border-slate-200/90 bg-white hover:border-indigo-300 hover:shadow-xs transition dark:border-slate-800 dark:bg-slate-900 dark:hover:border-slate-700"
+                >
+                    <div className="flex items-center justify-between w-full">
+                        <span className="flex h-6 w-6 items-center justify-center rounded-full bg-indigo-50 text-[11px] font-bold text-indigo-600 dark:bg-indigo-950 dark:text-indigo-400">
+                            3
+                        </span>
+                        <BookOpen size={16} className="text-slate-400 group-hover:text-indigo-600 transition" />
+                    </div>
+                    <div className="mt-3">
+                        <h3 className="text-xs font-semibold text-slate-900 dark:text-white group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition">
+                            Study & Revise
+                        </h3>
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                            Practice with MCQs, interactive flashcards & revision sheets
+                        </p>
+                    </div>
+                </button>
+            </div>
+
+            {/* 3. Recent Master Notes (Most Prominent Dashboard Section) */}
+            <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                    <div>
+                        <h2 className="text-sm font-semibold text-slate-900 dark:text-white">
+                            Recent Master Notes
+                        </h2>
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                            Synthesized notes and study documents from your courses
+                        </p>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={onOpenVault}
+                        className="text-xs font-medium text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 flex items-center gap-0.5 transition"
+                    >
+                        <span>View All</span>
+                        <ChevronRight size={13} />
+                    </button>
+                </div>
+
+                {displayNotes.length === 0 ? (
+                    <div className="rounded-xl border border-dashed border-slate-200 p-8 text-center dark:border-slate-800">
+                        <FileText size={28} className="mx-auto text-slate-300 dark:text-slate-600" />
+                        <p className="mt-2 text-xs font-medium text-slate-600 dark:text-slate-400">
+                            No Master Notes generated yet
+                        </p>
                         <button
                             type="button"
                             onClick={() => onOpenStudio()}
-                            className="inline-flex items-center space-x-1 text-xs font-semibold text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 ml-1"
+                            className="mt-3 inline-flex items-center space-x-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500 transition"
                         >
-                            <span>Open Studio</span>
-                            <ArrowRight size={13} />
+                            <Sparkles size={13} />
+                            <span>Create First Note</span>
                         </button>
+                    </div>
+                ) : (
+                    <div className="divide-y divide-slate-100 rounded-xl border border-slate-200/90 bg-white overflow-hidden shadow-2xs dark:divide-slate-800 dark:border-slate-800 dark:bg-slate-900">
+                        {displayNotes.map((note) => (
+                            <div
+                                key={note.id}
+                                onClick={() => onViewMasterNote(note)}
+                                className="group flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 hover:bg-slate-50/80 dark:hover:bg-slate-800/50 transition cursor-pointer"
+                            >
+                                <div className="flex items-center space-x-3 min-w-0">
+                                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600 dark:bg-indigo-950 dark:text-indigo-400">
+                                        <FileText size={15} />
+                                    </div>
+                                    <div className="min-w-0">
+                                        <div className="flex items-center gap-2">
+                                            <span className="font-semibold text-xs text-slate-900 dark:text-white truncate group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition">
+                                                {note.chapter || note.title}
+                                            </span>
+                                            <span className="shrink-0 rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">
+                                                Sec {note.section}
+                                            </span>
+                                        </div>
+                                        <div className="flex items-center gap-3 text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                                            <span className="font-medium text-slate-700 dark:text-slate-300">
+                                                {note.subject_code}
+                                            </span>
+                                            <span>•</span>
+                                            <span className="truncate">{note.professor}</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0">
+                                    <div className="flex items-center gap-2 text-[11px] text-slate-400">
+                                        <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-medium">
+                                            <CheckCircle2 size={12} />
+                                            <span>Verified</span>
+                                        </span>
+                                        <span>•</span>
+                                        <span>{formatDate(note.created_at || note.updated_at || '')}</span>
+                                    </div>
+
+                                    <button
+                                        type="button"
+                                        onClick={(e) => handleDownload(e, note)}
+                                        className="flex h-7 w-7 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200 transition"
+                                        title="Download PDF"
+                                    >
+                                        <Download size={13} />
+                                    </button>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </div>
+
+            {/* 4. Academic Overview (Exactly 3 small statistics: Master Notes Created, Uploaded Materials, Study Kits) */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="rounded-xl border border-slate-200/90 bg-white p-4 shadow-2xs dark:border-slate-800 dark:bg-slate-900">
+                    <div className="flex items-center justify-between text-slate-500 dark:text-slate-400">
+                        <span className="text-xs font-medium">Master Notes Created</span>
+                        <FileText size={15} className="text-indigo-600 dark:text-indigo-400" />
+                    </div>
+                    <div className="mt-2 flex items-baseline justify-between">
+                        <span className="text-2xl font-bold text-slate-900 dark:text-white">
+                            {metrics.total_master_notes || recentNotes.length || 0}
+                        </span>
+                        <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">
+                            Synced
+                        </span>
                     </div>
                 </div>
 
-                <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs">
-                        <thead>
-                            <tr className="border-b border-slate-100 bg-slate-50/70 text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:border-slate-800 dark:bg-slate-800/50 dark:text-slate-400">
-                                <th className="px-6 py-3">Chapter Name</th>
-                                <th className="px-4 py-3">Subject</th>
-                                <th className="px-4 py-3">Professor</th>
-                                <th className="px-4 py-3">Section</th>
-                                <th className="px-4 py-3">Date</th>
-                                <th className="px-4 py-3">Status</th>
-                                <th className="px-6 py-3 text-right">Download</th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                            {filteredNotes.length === 0 ? (
-                                <tr>
-                                    <td colSpan={7} className="px-6 py-8 text-center text-xs text-slate-400">
-                                        No master notes match the current filter. Try clearing the search or filter criteria.
-                                    </td>
-                                </tr>
-                            ) : (
-                                filteredNotes.map((note) => (
-                                    <tr
-                                        key={note.id}
-                                        onClick={() => onViewMasterNote(note)}
-                                        className="group cursor-pointer transition-colors hover:bg-slate-50/90 dark:hover:bg-slate-800/50"
-                                    >
-                                        <td className="px-6 py-3.5">
-                                            <div className="font-semibold text-slate-900 group-hover:text-indigo-600 dark:text-white dark:group-hover:text-indigo-400 transition">
-                                                {note.chapter}
-                                            </div>
-                                            <div className="text-[11px] text-slate-500 mt-0.5 line-clamp-1">
-                                                {note.title}
-                                            </div>
-                                        </td>
-                                        <td className="px-4 py-3.5">
-                                            <span className="inline-flex items-center rounded bg-slate-100 px-2 py-0.5 font-mono text-[11px] font-semibold text-slate-800 dark:bg-slate-800 dark:text-slate-200">
-                                                {note.subject_code}
-                                            </span>
-                                            <div className="text-[10px] text-slate-400 mt-0.5 truncate max-w-[140px]">
-                                                {note.subject_name}
-                                            </div>
-                                        </td>
-                                        <td className="px-4 py-3.5 font-medium text-slate-700 dark:text-slate-300">
-                                            {note.professor}
-                                        </td>
-                                        <td className="px-4 py-3.5">
-                                            <div className="flex items-center space-x-1">
-                                                <span className="rounded bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">
-                                                    Sec {note.section}
-                                                </span>
-                                                {note.source_sections.length > 1 && (
-                                                    <span className="text-[10px] font-medium text-slate-400">
-                                                        (+{note.source_sections.filter((s) => s !== note.section).join(',')})
-                                                    </span>
-                                                )}
-                                            </div>
-                                        </td>
-                                        <td className="px-4 py-3.5 text-slate-500 whitespace-nowrap">
-                                            <div className="inline-flex items-center space-x-1">
-                                                <Calendar size={12} className="text-slate-400" />
-                                                <span>{formatDate(note.updated_at)}</span>
-                                            </div>
-                                        </td>
-                                        <td className="px-4 py-3.5">
-                                            <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-[10px] font-semibold text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/60 dark:text-emerald-400">
-                                                <CheckCircle2 size={11} className="mr-1" />
-                                                Source Verified
-                                            </span>
-                                        </td>
-                                        <td
-                                            className="px-6 py-3.5 text-right whitespace-nowrap"
-                                            onClick={(e) => e.stopPropagation()}
-                                        >
-                                            <div className="inline-flex items-center space-x-1.5">
-                                                <button
-                                                    type="button"
-                                                    onClick={() => onViewMasterNote(note)}
-                                                    className="inline-flex items-center space-x-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 transition"
-                                                >
-                                                    <Eye size={12} />
-                                                    <span>Open</span>
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => onDownloadNote(note.lecture_id, 'pdf')}
-                                                    className="inline-flex items-center space-x-1 rounded-lg bg-[#0B132B] px-2.5 py-1 text-xs font-semibold text-white hover:bg-indigo-600 dark:bg-indigo-600 dark:hover:bg-indigo-500 transition"
-                                                    title="Download PDF"
-                                                >
-                                                    <Download size={12} />
-                                                    <span>PDF</span>
-                                                </button>
-                                            </div>
-                                        </td>
-                                    </tr>
-                                ))
-                            )}
-                        </tbody>
-                    </table>
+                <div className="rounded-xl border border-slate-200/90 bg-white p-4 shadow-2xs dark:border-slate-800 dark:bg-slate-900">
+                    <div className="flex items-center justify-between text-slate-500 dark:text-slate-400">
+                        <span className="text-xs font-medium">Uploaded Materials</span>
+                        <UploadCloud size={15} className="text-indigo-600 dark:text-indigo-400" />
+                    </div>
+                    <div className="mt-2 flex items-baseline justify-between">
+                        <span className="text-2xl font-bold text-slate-900 dark:text-white">
+                            {metrics.uploaded_sources || 0}
+                        </span>
+                        <span className="text-[10px] text-slate-400">Whiteboards & PDFs</span>
+                    </div>
+                </div>
+
+                <div className="rounded-xl border border-slate-200/90 bg-white p-4 shadow-2xs dark:border-slate-800 dark:bg-slate-900">
+                    <div className="flex items-center justify-between text-slate-500 dark:text-slate-400">
+                        <span className="text-xs font-medium">Study Kits</span>
+                        <BookOpen size={15} className="text-indigo-600 dark:text-indigo-400" />
+                    </div>
+                    <div className="mt-2 flex items-baseline justify-between">
+                        <span className="text-2xl font-bold text-slate-900 dark:text-white">
+                            {metrics.available_study_kits || 0}
+                        </span>
+                        <span className="text-[10px] text-indigo-600 dark:text-indigo-400 font-medium">
+                            MCQs & Cards
+                        </span>
+                    </div>
                 </div>
             </div>
 
-            {storageError && (
-                <div
-                    role="alert"
-                    className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs font-semibold text-red-700 flex items-center justify-between"
-                >
-                    <span>{storageError}</span>
+            {/* 5. Enrolled Subjects (Top 3 most active subjects) */}
+            <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                    <div>
+                        <h2 className="text-sm font-semibold text-slate-900 dark:text-white">
+                            Enrolled Subjects
+                        </h2>
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                            Active coursework and syllabus chapters
+                        </p>
+                    </div>
                     <button
                         type="button"
-                        onClick={() => setStorageError(null)}
-                        className="text-red-500 hover:text-red-800 font-bold"
+                        onClick={onOpenVault}
+                        className="text-xs font-medium text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 flex items-center gap-0.5 transition"
                     >
-                        Dismiss
+                        <span>View All Subjects</span>
+                        <ChevronRight size={13} />
                     </button>
                 </div>
-            )}
 
-            {/* 6. Workspaces & Upload History (Supabase Storage Buckets + RLS) */}
-            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-                {/* Workspaces List */}
-                <div className="rounded-xl border border-slate-200/90 bg-white shadow-saas dark:border-slate-800 dark:bg-slate-900 overflow-hidden flex flex-col">
-                    <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4 dark:border-slate-800">
-                        <div>
-                            <h2 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                                <FolderLock size={15} className="text-indigo-600" />
-                                <span>Lecture Workspaces ({localWorkspaces.length})</span>
-                            </h2>
-                            <p className="text-xs text-slate-500 mt-0.5">
-                                RLS-protected private and section-shared academic workspaces
-                            </p>
-                        </div>
-                        <button
-                            type="button"
-                            onClick={() => setShowNewWorkspace((prev) => !prev)}
-                            className="inline-flex items-center gap-1 rounded-lg bg-[#0B132B] px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 transition"
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    {displaySubjects.map((s) => (
+                        <div
+                            key={s.id}
+                            onClick={() => {
+                                if (onSelectSubject) onSelectSubject(s);
+                            }}
+                            className="group p-4 rounded-xl border border-slate-200/90 bg-white hover:border-slate-300 hover:shadow-xs transition dark:border-slate-800 dark:bg-slate-900 dark:hover:border-slate-700 cursor-pointer"
                         >
-                            <Plus size={13} />
-                            <span>New Workspace</span>
-                        </button>
-                    </div>
-
-                    {showNewWorkspace && (
-                        <form
-                            onSubmit={handleCreateWorkspace}
-                            className="border-b border-slate-100 bg-slate-50/70 p-4 space-y-3"
-                        >
-                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                                <input
-                                    type="text"
-                                    required
-                                    value={wsTitle}
-                                    onChange={(e) => setWsTitle(e.target.value)}
-                                    placeholder="Workspace title (e.g., Lecture 8 Paxos)"
-                                    className="sm:col-span-2 px-3 py-1.5 text-xs border border-slate-300 rounded-lg bg-white"
-                                />
-                                <select
-                                    value={wsVisibility}
-                                    onChange={(e) => setWsVisibility(e.target.value as VisibilityType)}
-                                    className="px-2.5 py-1.5 text-xs border border-slate-300 rounded-lg bg-white"
-                                >
-                                    <option value="private">Private (Owner RLS)</option>
-                                    <option value="section">Section Shared</option>
-                                    <option value="public">Public Vault</option>
-                                </select>
+                            <div className="flex items-center justify-between">
+                                <span className="font-bold text-xs text-indigo-600 dark:text-indigo-400">
+                                    {s.code}
+                                </span>
+                                <span className="rounded bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 dark:text-slate-400">
+                                    {s.chapters_count} Chapters
+                                </span>
                             </div>
-                            <div className="flex items-center justify-between gap-2">
-                                <div className="flex items-center gap-2">
-                                    <select
-                                        value={wsSubjectId}
-                                        onChange={(e) => setWsSubjectId(e.target.value)}
-                                        className="px-2.5 py-1.5 text-xs border border-slate-300 rounded-lg bg-white"
-                                    >
-                                        {subjects.map((s) => (
-                                            <option key={s.id} value={s.id}>
-                                                {s.code} — {s.name}
-                                            </option>
-                                        ))}
-                                    </select>
-                                    <select
-                                        value={wsSection}
-                                        onChange={(e) => setWsSection(e.target.value as SectionId)}
-                                        className="px-2.5 py-1.5 text-xs border border-slate-300 rounded-lg bg-white"
-                                    >
-                                        {(['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I'] as SectionId[]).map(
-                                            (sec) => (
-                                                <option key={sec} value={sec}>
-                                                    Sec {sec}
-                                                </option>
-                                            )
-                                        )}
-                                    </select>
-                                </div>
-                                <button
-                                    type="submit"
-                                    disabled={wsCreating}
-                                    className="px-3.5 py-1.5 rounded-lg bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 disabled:opacity-50"
-                                >
-                                    {wsCreating ? 'Creating...' : 'Create'}
-                                </button>
+                            <h3 className="mt-2 text-xs font-semibold text-slate-900 dark:text-white group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition truncate">
+                                {s.name}
+                            </h3>
+                            <div className="mt-1 flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400">
+                                <GraduationCap size={12} />
+                                <span className="truncate">{s.teacher}</span>
                             </div>
-                        </form>
-                    )}
-
-                    <div className="divide-y divide-slate-100 max-h-80 overflow-y-auto">
-                        {localWorkspaces.length === 0 ? (
-                            <div className="p-6 text-center text-xs text-slate-400">
-                                No workspaces found. Create one above to organize your lecture captures.
-                            </div>
-                        ) : (
-                            localWorkspaces.map((ws) => (
-                                <div
-                                    key={ws.id}
-                                    className="px-6 py-3.5 flex items-center justify-between hover:bg-slate-50/80 transition"
-                                >
-                                    <div className="min-w-0 pr-3">
-                                        <div className="flex items-center gap-2">
-                                            <span className="text-xs font-semibold text-slate-900 truncate">
-                                                {ws.title || ws.name}
-                                            </span>
-                                            <span
-                                                className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold ${
-                                                    ws.visibility === 'private'
-                                                        ? 'bg-amber-50 text-amber-800 border border-amber-200'
-                                                        : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                                }`}
-                                            >
-                                                {ws.visibility === 'private' ? (
-                                                    <Lock size={10} />
-                                                ) : (
-                                                    <Globe size={10} />
-                                                )}
-                                                <span>{ws.visibility || 'private'}</span>
-                                            </span>
-                                        </div>
-                                        <div className="text-[11px] text-slate-500 mt-0.5">
-                                            Section {ws.section || currentSection} • {ws.semester} •{' '}
-                                            {ws.lecture_date || formatDate(ws.created_at)}
-                                        </div>
-                                    </div>
-                                    <div className="flex items-center gap-1.5 shrink-0">
-                                        {ws.user_id === userProfile.id && ws.id !== 'ws_main' && (
-                                            <button
-                                                type="button"
-                                                onClick={() => handleDeleteWorkspace(ws.id)}
-                                                title="Delete Workspace"
-                                                className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition"
-                                            >
-                                                <Trash2 size={13} />
-                                            </button>
-                                        )}
-                                    </div>
-                                </div>
-                            ))
-                        )}
-                    </div>
-                </div>
-
-                {/* Upload History & Supabase Storage Buckets */}
-                <div className="rounded-xl border border-slate-200/90 bg-white shadow-saas dark:border-slate-800 dark:bg-slate-900 overflow-hidden flex flex-col">
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 px-6 py-4 dark:border-slate-800">
-                        <div>
-                            <h2 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                                <HardDrive size={15} className="text-indigo-600" />
-                                <span>Upload History & Supabase Storage ({filteredUploads.length})</span>
-                            </h2>
-                            <p className="text-xs text-slate-500 mt-0.5">
-                                Secure buckets with HMAC-SHA256 signed URLs & ownership RLS
-                            </p>
                         </div>
-
-                        <div className="flex items-center gap-1.5">
-                            <select
-                                aria-label="Target storage bucket"
-                                value={selectedBucket}
-                                onChange={(e) => setSelectedBucket(e.target.value as StorageBucketType)}
-                                className="px-2 py-1 text-[11px] border border-slate-200 rounded-lg bg-slate-50"
-                            >
-                                <option value="private-student-uploads">Bucket: Private Uploads</option>
-                                <option value="shared-academic-materials">Bucket: Shared Materials</option>
-                                <option value="generated-documents">Bucket: Generated Docs</option>
-                                <option value="generated-diagrams">Bucket: Generated Diagrams</option>
-                            </select>
-                            <select
-                                aria-label="Source material type"
-                                value={selectedSourceType}
-                                onChange={(e) =>
-                                    setSelectedSourceType(e.target.value as SourceMaterialType)
-                                }
-                                className="px-2 py-1 text-[11px] border border-slate-200 rounded-lg bg-slate-50"
-                            >
-                                <option value="whiteboard">Whiteboard</option>
-                                <option value="blackboard">Blackboard</option>
-                                <option value="handwritten_notes">Handwritten</option>
-                                <option value="reference_pdf">Reference PDF</option>
-                            </select>
-                            <label className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 px-2.5 py-1.5 text-[11px] font-semibold text-white hover:bg-indigo-700 cursor-pointer transition">
-                                {uploadingStorage ? (
-                                    <progress aria-label="Uploading file" className="loading-spinner" />
-                                ) : (
-                                    <UploadCloud size={12} />
-                                )}
-                                <span>Upload</span>
-                                <input
-                                    type="file"
-                                    accept=".jpg,.jpeg,.png,.webp,.pdf"
-                                    onChange={handleDirectStorageUpload}
-                                    className="hidden"
-                                />
-                            </label>
-                        </div>
-                    </div>
-
-                    <div className="divide-y divide-slate-100 max-h-80 overflow-y-auto">
-                        {filteredUploads.length === 0 ? (
-                            <div className="p-6 text-center text-xs text-slate-400">
-                                No uploaded files found in Supabase Storage. Upload a whiteboard image or PDF above.
-                            </div>
-                        ) : (
-                            filteredUploads.map((src) => (
-                                <div
-                                    key={src.id}
-                                    className="px-6 py-3 flex items-center justify-between hover:bg-slate-50/80 transition"
-                                >
-                                    <div className="min-w-0 pr-3">
-                                        <div className="flex items-center gap-2">
-                                            <span className="text-xs font-semibold text-slate-900 truncate">
-                                                {src.file_name || src.original_filename}
-                                            </span>
-                                            <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-slate-600">
-                                                {src.bucket_id || 'private-student-uploads'}
-                                            </span>
-                                        </div>
-                                        <div className="text-[11px] text-slate-500 mt-0.5 truncate">
-                                            {src.source_type.replace('_', ' ')} •{' '}
-                                            {Math.max(1, Math.round((src.file_size_bytes || 1024) / 1024))} KB •{' '}
-                                            {formatDate(src.created_at)}
-                                        </div>
-                                    </div>
-                                    <div className="flex items-center gap-1.5 shrink-0">
-                                        <button
-                                            type="button"
-                                            onClick={() => handleOpenSignedUrl(src)}
-                                            className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-50 transition"
-                                            title="Open via HMAC Signed URL"
-                                        >
-                                            <Link2 size={11} />
-                                            <span>Signed URL</span>
-                                        </button>
-                                        {src.user_id === userProfile.id && (
-                                            <button
-                                                type="button"
-                                                onClick={() => handleDeleteSource(src.id)}
-                                                title="Delete File"
-                                                className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition"
-                                            >
-                                                <Trash2 size={13} />
-                                            </button>
-                                        )}
-                                    </div>
-                                </div>
-                            ))
-                        )}
-                    </div>
+                    ))}
                 </div>
             </div>
         </div>

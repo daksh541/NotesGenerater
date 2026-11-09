@@ -6,15 +6,13 @@ import {
     Plus,
     User,
     BookOpen,
-    Layers,
-    GraduationCap,
     Menu,
-    Settings,
     LogOut,
     FileText,
     Shield,
     ArrowUpRight,
     Check,
+    GraduationCap,
 } from 'lucide-react';
 import {
     MasterNoteContent,
@@ -31,12 +29,12 @@ interface LectraHeaderProps {
     currentSubject: SubjectModel | null;
     subjects: SubjectModel[];
     onSelectSubject: (subject: SubjectModel | null) => void;
-    currentSection: SectionId;
-    onSelectSection: (section: SectionId) => void;
+    currentSection?: SectionId;
+    onSelectSection?: (section: SectionId) => void;
     userProfile: UserProfile;
     notifications: NotificationItem[];
     onMarkNotificationsRead: () => void;
-    onCreateMasterNotesClick: () => void;
+    onCreateMasterNotesClick?: () => void;
     onSearchChange: (query: string) => void;
     searchQuery: string;
     onNavigateTab: (tab: LectraTab) => void;
@@ -47,14 +45,13 @@ interface LectraHeaderProps {
     onSelectNote?: (lectureId: string) => void;
     onLogout?: () => void;
     onOpenAuthModal?: (mode: 'login' | 'signup' | 'onboarding' | 'verify' | 'forgot') => void;
+    pageTitle?: string;
 }
 
 export const LectraHeader: React.FC<LectraHeaderProps> = ({
     currentSubject,
     subjects,
     onSelectSubject,
-    currentSection,
-    onSelectSection,
     userProfile,
     notifications,
     onMarkNotificationsRead,
@@ -69,15 +66,14 @@ export const LectraHeader: React.FC<LectraHeaderProps> = ({
     onSelectNote,
     onLogout,
     onOpenAuthModal,
+    pageTitle,
 }) => {
     const [showSubjectMenu, setShowSubjectMenu] = useState(false);
-    const [showSectionMenu, setShowSectionMenu] = useState(false);
     const [showNotifications, setShowNotifications] = useState(false);
     const [showUserMenu, setShowUserMenu] = useState(false);
     const [showSearchDropdown, setShowSearchDropdown] = useState(false);
 
     const headerRef = useRef<HTMLElement>(null);
-    const sections: SectionId[] = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I'];
     const unreadCount = notifications.filter((n) => !n.read).length;
 
     // Close dropdowns on outside click
@@ -85,7 +81,6 @@ export const LectraHeader: React.FC<LectraHeaderProps> = ({
         const handleClickOutside = (e: MouseEvent) => {
             if (headerRef.current && !headerRef.current.contains(e.target as Node)) {
                 setShowSubjectMenu(false);
-                setShowSectionMenu(false);
                 setShowNotifications(false);
                 setShowUserMenu(false);
                 setShowSearchDropdown(false);
@@ -125,177 +120,153 @@ export const LectraHeader: React.FC<LectraHeaderProps> = ({
     return (
         <header
             ref={headerRef}
-            className="sticky top-0 z-30 flex h-16 w-full items-center justify-between border-b border-slate-200/90 bg-white/95 px-4 backdrop-blur-md dark:border-slate-800 dark:bg-slate-900/95 sm:px-6"
+            className="sticky top-0 z-30 flex h-14 w-full items-center justify-between border-b border-slate-200/90 bg-white/95 px-4 backdrop-blur-md dark:border-slate-800 dark:bg-[#0B132B]/95 sm:px-6"
         >
-            {/* Left: Mobile Hamburger + Global Search */}
-            <div className="flex flex-1 items-center gap-3 max-w-lg">
+            {/* Left: Mobile Toggle & Page Title / Breadcrumb */}
+            <div className="flex items-center gap-3">
                 {onOpenMobileSidebar && (
                     <button
                         type="button"
                         onClick={onOpenMobileSidebar}
-                        className="flex lg:hidden h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                        className="flex lg:hidden h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
                         aria-label="Open Navigation Drawer"
                     >
-                        <Menu size={18} />
+                        <Menu size={16} />
                     </button>
                 )}
 
-                <div className="relative w-full">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={15} />
-                    <input
-                        type="text"
-                        value={searchQuery}
-                        onFocus={() => setShowSearchDropdown(true)}
-                        onChange={(e) => {
-                            onSearchChange(e.target.value);
-                            setShowSearchDropdown(true);
-                        }}
-                        placeholder="Search chapters, subjects, sections A–I, or faculty..."
-                        aria-label="Global Search"
-                        className="w-full rounded-lg border border-slate-200 bg-slate-50/80 py-2 pl-9 pr-14 text-xs font-medium text-slate-800 placeholder-slate-400 transition-all focus:border-indigo-600 focus:bg-white focus:ring-2 focus:ring-indigo-500/15 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:placeholder-slate-500"
-                    />
-                    <kbd className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 hidden sm:inline-block rounded border border-slate-200 bg-white px-1.5 py-0.5 font-mono text-[10px] font-medium text-slate-400 dark:border-slate-700 dark:bg-slate-900">
-                        ⌘K
-                    </kbd>
-
-                    {/* Global Search Results Popover */}
-                    {showSearchDropdown && cleanQ.length > 0 && (
-                        <div className="absolute left-0 mt-2 w-full sm:w-[440px] rounded-xl border border-slate-200 bg-white p-2 shadow-xl dark:border-slate-700 dark:bg-slate-900 z-50 max-h-96 overflow-y-auto">
-                            <div className="px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-                                Global Search Results for "{searchQuery}"
-                            </div>
-
-                            {matchedNotes.length === 0 && matchedVault.length === 0 && matchedProfs.length === 0 ? (
-                                <div className="py-6 text-center text-xs text-slate-400">
-                                    No matching notes or faculty found. Try searching in Section Vault.
-                                </div>
-                            ) : (
-                                <div className="space-y-2 pt-1">
-                                    {matchedNotes.length > 0 && (
-                                        <div>
-                                            <div className="px-2.5 py-1 text-[10px] font-semibold text-indigo-600 dark:text-indigo-400">
-                                                Master Notes ({matchedNotes.length})
-                                            </div>
-                                            {matchedNotes.map((note) => (
-                                                <button
-                                                    key={note.id}
-                                                    type="button"
-                                                    onClick={() => {
-                                                        if (onSelectNote) onSelectNote(note.lecture_id);
-                                                        setShowSearchDropdown(false);
-                                                    }}
-                                                    className="flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-left text-xs hover:bg-slate-50 dark:hover:bg-slate-800"
-                                                >
-                                                    <div className="flex items-center space-x-2 min-w-0">
-                                                        <FileText size={14} className="text-indigo-600 shrink-0" />
-                                                        <div className="truncate">
-                                                            <div className="font-semibold text-slate-800 dark:text-slate-200 truncate">
-                                                                {note.title}
-                                                            </div>
-                                                            <div className="text-[10px] text-slate-400">
-                                                                {note.subject_code} • {note.chapter} • Sec {note.section}
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                    <ArrowUpRight size={13} className="text-slate-400 shrink-0" />
-                                                </button>
-                                            ))}
-                                        </div>
-                                    )}
-
-                                    {matchedVault.length > 0 && (
-                                        <div>
-                                            <div className="px-2.5 py-1 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
-                                                Section Vault ({matchedVault.length})
-                                            </div>
-                                            {matchedVault.slice(0, 3).map((v) => (
-                                                <button
-                                                    key={v.id}
-                                                    type="button"
-                                                    onClick={() => {
-                                                        onNavigateTab('vault');
-                                                        setShowSearchDropdown(false);
-                                                    }}
-                                                    className="flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-left text-xs hover:bg-slate-50 dark:hover:bg-slate-800"
-                                                >
-                                                    <div className="flex items-center space-x-2 min-w-0">
-                                                        <Shield size={14} className="text-emerald-600 shrink-0" />
-                                                        <div className="truncate">
-                                                            <div className="font-semibold text-slate-800 dark:text-slate-200 truncate">
-                                                                {v.title}
-                                                            </div>
-                                                            <div className="text-[10px] text-slate-400">
-                                                                Section {v.section} • {v.professor}
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                    <ArrowUpRight size={13} className="text-slate-400 shrink-0" />
-                                                </button>
-                                            ))}
-                                        </div>
-                                    )}
-
-                                    {matchedProfs.length > 0 && (
-                                        <div>
-                                            <div className="px-2.5 py-1 text-[10px] font-semibold text-slate-500">
-                                                Faculty ({matchedProfs.length})
-                                            </div>
-                                            {matchedProfs.map((p) => (
-                                                <button
-                                                    key={p.id}
-                                                    type="button"
-                                                    onClick={() => {
-                                                        onNavigateTab('professors');
-                                                        setShowSearchDropdown(false);
-                                                    }}
-                                                    className="flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-left text-xs hover:bg-slate-50 dark:hover:bg-slate-800"
-                                                >
-                                                    <div className="flex items-center space-x-2">
-                                                        <GraduationCap size={14} className="text-indigo-600" />
-                                                        <div>
-                                                            <div className="font-semibold text-slate-800 dark:text-slate-200">
-                                                                {p.name}
-                                                            </div>
-                                                            <div className="text-[10px] text-slate-400">{p.department}</div>
-                                                        </div>
-                                                    </div>
-                                                    <ArrowUpRight size={13} className="text-slate-400" />
-                                                </button>
-                                            ))}
-                                        </div>
-                                    )}
-                                </div>
-                            )}
-                        </div>
-                    )}
-                </div>
+                {pageTitle && (
+                    <h2 className="text-sm font-semibold text-slate-900 dark:text-white hidden sm:block">
+                        {pageTitle}
+                    </h2>
+                )}
             </div>
 
-            {/* Right: Selectors & Actions */}
-            <div className="flex items-center space-x-2.5">
-                {/* Subject Selector */}
-                <div className="relative hidden md:block">
+            {/* Center: Minimal Global Search */}
+            <div className="relative flex-1 max-w-md mx-4">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
+                <input
+                    type="text"
+                    value={searchQuery}
+                    onFocus={() => setShowSearchDropdown(true)}
+                    onChange={(e) => {
+                        onSearchChange(e.target.value);
+                        setShowSearchDropdown(true);
+                    }}
+                    placeholder="Search notes, chapters, professors..."
+                    aria-label="Global Search"
+                    className="w-full rounded-lg border border-slate-200 bg-slate-50/70 py-1.5 pl-8 pr-12 text-xs font-medium text-slate-800 placeholder-slate-400 transition-all focus:border-indigo-500 focus:bg-white focus:ring-1 focus:ring-indigo-500/20 focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:placeholder-slate-500"
+                />
+                <kbd className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 hidden sm:inline-block rounded border border-slate-200 bg-white px-1.5 py-0.5 font-mono text-[9px] font-medium text-slate-400 dark:border-slate-700 dark:bg-slate-800">
+                    ⌘K
+                </kbd>
+
+                {/* Global Search Popover */}
+                {showSearchDropdown && cleanQ.length > 0 && (
+                    <div className="absolute left-0 mt-2 w-full sm:w-[420px] rounded-xl border border-slate-200 bg-white p-2 shadow-xl dark:border-slate-700 dark:bg-slate-900 z-50 max-h-80 overflow-y-auto">
+                        <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                            Results for "{searchQuery}"
+                        </div>
+
+                        {matchedNotes.length === 0 && matchedVault.length === 0 && matchedProfs.length === 0 ? (
+                            <div className="py-4 text-center text-xs text-slate-400">
+                                No matching notes found. Try Section Vault.
+                            </div>
+                        ) : (
+                            <div className="space-y-2 pt-1">
+                                {matchedNotes.length > 0 && (
+                                    <div>
+                                        <div className="px-2.5 py-0.5 text-[10px] font-semibold text-indigo-600 dark:text-indigo-400">
+                                            Master Notes ({matchedNotes.length})
+                                        </div>
+                                        {matchedNotes.slice(0, 3).map((note) => (
+                                            <button
+                                                key={note.id}
+                                                type="button"
+                                                onClick={() => {
+                                                    if (onSelectNote) onSelectNote(note.lecture_id);
+                                                    setShowSearchDropdown(false);
+                                                }}
+                                                className="flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-xs hover:bg-slate-50 dark:hover:bg-slate-800"
+                                            >
+                                                <div className="flex items-center space-x-2 min-w-0">
+                                                    <FileText size={13} className="text-indigo-600 shrink-0" />
+                                                    <div className="truncate">
+                                                        <div className="font-medium text-slate-800 dark:text-slate-200 truncate">
+                                                            {note.title}
+                                                        </div>
+                                                        <div className="text-[10px] text-slate-400">
+                                                            {note.subject_code} • {note.chapter}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <ArrowUpRight size={12} className="text-slate-400 shrink-0" />
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+
+                                {matchedVault.length > 0 && (
+                                    <div>
+                                        <div className="px-2.5 py-0.5 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
+                                            Section Vault ({matchedVault.length})
+                                        </div>
+                                        {matchedVault.slice(0, 3).map((v) => (
+                                            <button
+                                                key={v.id}
+                                                type="button"
+                                                onClick={() => {
+                                                    onNavigateTab('vault');
+                                                    setShowSearchDropdown(false);
+                                                }}
+                                                className="flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-xs hover:bg-slate-50 dark:hover:bg-slate-800"
+                                            >
+                                                <div className="flex items-center space-x-2 min-w-0">
+                                                    <Shield size={13} className="text-emerald-600 shrink-0" />
+                                                    <div className="truncate">
+                                                        <div className="font-medium text-slate-800 dark:text-slate-200 truncate">
+                                                            {v.title}
+                                                        </div>
+                                                        <div className="text-[10px] text-slate-400">
+                                                            Sec {v.section} • {v.professor}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <ArrowUpRight size={12} className="text-slate-400 shrink-0" />
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                )}
+            </div>
+
+            {/* Right: Course Selector, Notifications & Profile */}
+            <div className="flex items-center space-x-2">
+                {/* Current Course Selector */}
+                <div className="relative">
                     <button
                         type="button"
                         onClick={() => {
                             setShowSubjectMenu(!showSubjectMenu);
-                            setShowSectionMenu(false);
                             setShowNotifications(false);
                             setShowUserMenu(false);
                         }}
-                        className="flex items-center space-x-2 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-xs transition hover:border-slate-300 hover:bg-slate-50/60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                        className="flex items-center space-x-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 shadow-2xs transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
                     >
-                        <BookOpen size={14} className="text-indigo-600 dark:text-indigo-400" />
-                        <span className="max-w-[150px] truncate font-semibold">
-                            {currentSubject ? `${currentSubject.code} • ${currentSubject.name}` : 'All Subjects'}
+                        <BookOpen size={13} className="text-indigo-600 dark:text-indigo-400" />
+                        <span className="max-w-[120px] truncate text-xs font-medium">
+                            {currentSubject ? currentSubject.code : 'All Courses'}
                         </span>
-                        <ChevronDown size={13} className="text-slate-400" />
+                        <ChevronDown size={11} className="text-slate-400" />
                     </button>
 
                     {showSubjectMenu && (
-                        <div className="absolute right-0 mt-2 w-72 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl dark:border-slate-700 dark:bg-slate-900 z-50">
-                            <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-                                Filter by Academic Subject
+                        <div className="absolute right-0 mt-2 w-64 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl dark:border-slate-700 dark:bg-slate-900 z-50">
+                            <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                                Select Active Course
                             </div>
                             <button
                                 type="button"
@@ -303,14 +274,14 @@ export const LectraHeader: React.FC<LectraHeaderProps> = ({
                                     onSelectSubject(null);
                                     setShowSubjectMenu(false);
                                 }}
-                                className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-xs transition ${
+                                className={`flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-xs transition ${
                                     !currentSubject
-                                        ? 'bg-indigo-50 font-semibold text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-400'
+                                        ? 'bg-indigo-50 font-semibold text-indigo-700 dark:bg-indigo-950 dark:text-indigo-400'
                                         : 'text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800'
                                 }`}
                             >
-                                <span>All Enrolled Subjects</span>
-                                {!currentSubject && <Check size={13} className="text-indigo-600" />}
+                                <span>All Enrolled Courses</span>
+                                {!currentSubject && <Check size={12} className="text-indigo-600" />}
                             </button>
                             {subjects.map((s) => (
                                 <button
@@ -320,66 +291,21 @@ export const LectraHeader: React.FC<LectraHeaderProps> = ({
                                         onSelectSubject(s);
                                         setShowSubjectMenu(false);
                                     }}
-                                    className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-xs transition ${
+                                    className={`flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-xs transition ${
                                         currentSubject?.id === s.id
-                                            ? 'bg-indigo-50 font-semibold text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-400'
+                                            ? 'bg-indigo-50 font-semibold text-indigo-700 dark:bg-indigo-950 dark:text-indigo-400'
                                             : 'text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800'
                                     }`}
                                 >
                                     <div className="min-w-0 pr-2">
                                         <div className="font-semibold text-slate-900 dark:text-white">{s.code}</div>
-                                        <div className="text-[11px] text-slate-500 truncate">{s.name}</div>
+                                        <div className="text-[10px] text-slate-400 truncate">{s.name}</div>
                                     </div>
-                                    <span className="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-400">
+                                    <span className="shrink-0 text-[10px] text-slate-400">
                                         {s.teacher.split(' ').pop()}
                                     </span>
                                 </button>
                             ))}
-                        </div>
-                    )}
-                </div>
-
-                {/* Section Selector (Sections A through I) */}
-                <div className="relative">
-                    <button
-                        type="button"
-                        onClick={() => {
-                            setShowSectionMenu(!showSectionMenu);
-                            setShowSubjectMenu(false);
-                            setShowNotifications(false);
-                            setShowUserMenu(false);
-                        }}
-                        className="flex items-center space-x-1.5 rounded-lg border border-indigo-200/80 bg-indigo-50/70 px-3 py-1.5 text-xs font-semibold text-indigo-950 transition hover:bg-indigo-100/80 dark:border-indigo-900 dark:bg-indigo-950/60 dark:text-indigo-300"
-                    >
-                        <Layers size={13} className="text-indigo-600 dark:text-indigo-400" />
-                        <span>Section {currentSection}</span>
-                        <ChevronDown size={12} className="text-indigo-500" />
-                    </button>
-
-                    {showSectionMenu && (
-                        <div className="absolute right-0 mt-2 w-56 rounded-xl border border-slate-200 bg-white p-2.5 shadow-xl dark:border-slate-700 dark:bg-slate-900 z-50">
-                            <div className="px-1.5 pb-2 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-                                Select Classroom Section (A–I)
-                            </div>
-                            <div className="grid grid-cols-3 gap-1.5">
-                                {sections.map((sec) => (
-                                    <button
-                                        key={sec}
-                                        type="button"
-                                        onClick={() => {
-                                            onSelectSection(sec);
-                                            setShowSectionMenu(false);
-                                        }}
-                                        className={`flex items-center justify-center rounded-lg py-1.5 text-xs font-semibold transition ${
-                                            currentSection === sec
-                                                ? 'bg-[#0B132B] text-white shadow-xs dark:bg-indigo-600'
-                                                : 'bg-slate-50 text-slate-700 hover:bg-indigo-50 hover:text-indigo-600 dark:bg-slate-800 dark:text-slate-300'
-                                        }`}
-                                    >
-                                        Sec {sec}
-                                    </button>
-                                ))}
-                            </div>
                         </div>
                     )}
                 </div>
@@ -391,16 +317,14 @@ export const LectraHeader: React.FC<LectraHeaderProps> = ({
                         onClick={() => {
                             setShowNotifications(!showNotifications);
                             setShowSubjectMenu(false);
-                            setShowSectionMenu(false);
                             setShowUserMenu(false);
                         }}
-                        className="relative flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
-                        title="Notifications"
-                        aria-label="Notifications"
+                        className="relative flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
+                        aria-label="View Notifications"
                     >
-                        <Bell size={16} />
+                        <Bell size={14} />
                         {unreadCount > 0 && (
-                            <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-indigo-600 text-[9px] font-bold text-white ring-2 ring-white dark:ring-slate-900">
+                            <span className="absolute -top-1 -right-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-indigo-600 px-1 text-[9px] font-bold text-white ring-2 ring-white dark:ring-slate-900">
                                 {unreadCount}
                             </span>
                         )}
@@ -408,119 +332,81 @@ export const LectraHeader: React.FC<LectraHeaderProps> = ({
 
                     {showNotifications && (
                         <div className="absolute right-0 mt-2 w-80 rounded-xl border border-slate-200 bg-white p-3 shadow-xl dark:border-slate-700 dark:bg-slate-900 z-50">
-                            <div className="flex items-center justify-between border-b border-slate-100 pb-2 dark:border-slate-800">
-                                <h3 className="text-xs font-bold text-slate-900 dark:text-white">Notifications</h3>
+                            <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
+                                <span className="text-xs font-semibold text-slate-900 dark:text-white">
+                                    Notifications
+                                </span>
                                 {unreadCount > 0 && (
                                     <button
                                         type="button"
                                         onClick={onMarkNotificationsRead}
-                                        className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-700 dark:text-indigo-400"
+                                        className="text-[10px] font-medium text-indigo-600 hover:text-indigo-500 dark:text-indigo-400"
                                     >
                                         Mark all read
                                     </button>
                                 )}
                             </div>
-                            <div className="max-h-64 space-y-1.5 overflow-y-auto py-2">
+                            <div className="mt-2 space-y-1.5 max-h-64 overflow-y-auto">
                                 {notifications.length === 0 ? (
-                                    <div className="py-6 text-center text-xs text-slate-400">No notifications</div>
+                                    <div className="py-4 text-center text-xs text-slate-400">
+                                        No recent notifications
+                                    </div>
                                 ) : (
                                     notifications.slice(0, 4).map((n) => (
                                         <div
                                             key={n.id}
-                                            onClick={() => {
-                                                onNavigateTab('notifications');
-                                                setShowNotifications(false);
-                                            }}
-                                            className={`cursor-pointer rounded-lg border p-2.5 transition ${
+                                            className={`rounded-lg p-2 text-xs transition ${
                                                 !n.read
-                                                    ? 'border-indigo-100 bg-indigo-50/40 dark:border-indigo-900/50 dark:bg-indigo-950/30'
-                                                    : 'border-slate-100 bg-slate-50/60 hover:bg-slate-100/70 dark:border-slate-800 dark:bg-slate-800/40'
+                                                    ? 'bg-indigo-50/70 dark:bg-indigo-950/40 text-slate-900 dark:text-slate-100'
+                                                    : 'text-slate-600 dark:text-slate-400'
                                             }`}
                                         >
-                                            <div className="flex items-center justify-between">
-                                                <span className="text-xs font-semibold text-slate-900 dark:text-slate-100">
-                                                    {n.title}
-                                                </span>
-                                                {!n.read && <span className="h-1.5 w-1.5 rounded-full bg-indigo-600" />}
-                                            </div>
-                                            <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 line-clamp-2">
+                                            <div className="font-semibold text-[11px]">{n.title}</div>
+                                            <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
                                                 {n.message}
-                                            </div>
+                                            </p>
                                         </div>
                                     ))
                                 )}
-                            </div>
-                            <div className="border-t border-slate-100 pt-2 dark:border-slate-800">
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        onNavigateTab('notifications');
-                                        setShowNotifications(false);
-                                    }}
-                                    className="w-full rounded-lg py-1.5 text-center text-xs font-semibold text-indigo-600 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-slate-800 transition"
-                                >
-                                    View All Notifications
-                                </button>
                             </div>
                         </div>
                     )}
                 </div>
 
-                {/* Primary CTA: Create Master Notes */}
-                <button
-                    type="button"
-                    onClick={onCreateMasterNotesClick}
-                    className="flex items-center space-x-1.5 rounded-lg bg-[#0B132B] hover:bg-indigo-600 px-3.5 py-2 text-xs font-semibold text-white shadow-xs transition-colors duration-150 dark:bg-indigo-600 dark:hover:bg-indigo-500"
-                >
-                    <Plus size={14} />
-                    <span className="hidden sm:inline">Create Master Notes</span>
-                    <span className="sm:hidden">Create</span>
-                </button>
-
-                {/* User Profile Menu */}
+                {/* User Profile */}
                 <div className="relative">
                     <button
                         type="button"
                         onClick={() => {
                             setShowUserMenu(!showUserMenu);
                             setShowSubjectMenu(false);
-                            setShowSectionMenu(false);
                             setShowNotifications(false);
                         }}
-                        className="flex items-center space-x-2 rounded-lg border border-slate-200 bg-white p-1 pl-1.5 pr-2 transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800"
+                        className="flex items-center space-x-1.5 rounded-lg border border-slate-200 bg-white p-1 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
                     >
-                        {userProfile.avatar_url ? (
-                            <img
-                                src={userProfile.avatar_url}
-                                alt={userProfile.full_name}
-                                className="h-6 w-6 rounded-md object-cover"
-                            />
-                        ) : (
-                            <div className="flex h-6 w-6 items-center justify-center rounded-md bg-indigo-100 text-xs font-bold text-indigo-700 dark:bg-indigo-950 dark:text-indigo-400">
-                                {userProfile.full_name.charAt(0)}
-                            </div>
-                        )}
-                        <span className="hidden text-xs font-semibold text-slate-800 dark:text-slate-200 lg:inline">
-                            {userProfile.full_name.split(' ')[0]}
-                        </span>
-                        <ChevronDown size={12} className="text-slate-400" />
+                        <div className="flex h-6 w-6 items-center justify-center rounded-md bg-indigo-600 text-[10px] font-bold text-white">
+                            {userProfile.full_name
+                                ? userProfile.full_name
+                                      .split(' ')
+                                      .map((n) => n[0])
+                                      .join('')
+                                      .slice(0, 2)
+                                      .toUpperCase()
+                                : 'U'}
+                        </div>
+                        <ChevronDown size={11} className="text-slate-400 hidden sm:block mr-0.5" />
                     </button>
 
                     {showUserMenu && (
-                        <div className="absolute right-0 mt-2 w-60 rounded-xl border border-slate-200 bg-white p-2 shadow-xl dark:border-slate-700 dark:bg-slate-900 z-50">
-                            <div className="border-b border-slate-100 px-2.5 pb-2.5 pt-1 dark:border-slate-800">
-                                <div className="text-xs font-bold text-slate-900 dark:text-white">
+                        <div className="absolute right-0 mt-2 w-56 rounded-xl border border-slate-200 bg-white p-2 shadow-xl dark:border-slate-700 dark:bg-slate-900 z-50">
+                            <div className="px-2.5 py-1.5 border-b border-slate-100 dark:border-slate-800">
+                                <div className="font-semibold text-xs text-slate-900 dark:text-white truncate">
                                     {userProfile.full_name}
                                 </div>
-                                <div className="text-[11px] text-slate-500 truncate">{userProfile.email}</div>
-                                <div className="mt-1.5 flex items-center space-x-1 text-[10px] font-semibold text-indigo-600 dark:text-indigo-400">
-                                    <GraduationCap size={12} />
-                                    <span>
-                                        {userProfile.university} • Sec {userProfile.section}
-                                    </span>
+                                <div className="text-[10px] text-slate-400 truncate">
+                                    {userProfile.university} • Sec {userProfile.section}
                                 </div>
                             </div>
-
                             <div className="py-1 space-y-0.5">
                                 <button
                                     type="button"
@@ -528,68 +414,36 @@ export const LectraHeader: React.FC<LectraHeaderProps> = ({
                                         onNavigateTab('profile');
                                         setShowUserMenu(false);
                                     }}
-                                    className="flex w-full items-center space-x-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-medium text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+                                    className="flex w-full items-center space-x-2 rounded-lg px-2.5 py-1.5 text-xs text-slate-700 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800"
                                 >
-                                    <User size={14} className="text-slate-400" />
-                                    <span>Academic Profile</span>
+                                    <User size={13} />
+                                    <span>Profile</span>
                                 </button>
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        onNavigateTab('notifications');
-                                        setShowUserMenu(false);
-                                    }}
-                                    className="flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-xs font-medium text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
-                                >
-                                    <div className="flex items-center space-x-2">
-                                        <Bell size={14} className="text-slate-400" />
-                                        <span>Notifications</span>
-                                    </div>
-                                    {unreadCount > 0 && (
-                                        <span className="rounded-full bg-indigo-100 px-1.5 py-0.2 text-[10px] font-bold text-indigo-700">
-                                            {unreadCount}
-                                        </span>
-                                    )}
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        onNavigateTab('settings');
-                                        setShowUserMenu(false);
-                                    }}
-                                    className="flex w-full items-center space-x-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-medium text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
-                                >
-                                    <Settings size={14} className="text-slate-400" />
-                                    <span>Workspace Settings</span>
-                                </button>
-                                {onOpenAuthModal && (
+                                {onLogout ? (
                                     <button
                                         type="button"
                                         onClick={() => {
                                             setShowUserMenu(false);
-                                            onOpenAuthModal('onboarding');
+                                            onLogout();
                                         }}
-                                        className="flex w-full items-center space-x-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-medium text-indigo-600 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-slate-800"
+                                        className="flex w-full items-center space-x-2 rounded-lg px-2.5 py-1.5 text-xs text-rose-600 hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-950/40"
                                     >
-                                        <GraduationCap size={14} />
-                                        <span>Academic Onboarding</span>
+                                        <LogOut size={13} />
+                                        <span>Sign Out</span>
                                     </button>
-                                )}
-                            </div>
-
-                            <div className="border-t border-slate-100 pt-1 dark:border-slate-800">
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        setShowUserMenu(false);
-                                        if (onLogout) onLogout();
-                                        else onNavigateTab('auth');
-                                    }}
-                                    className="flex w-full items-center space-x-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-medium text-rose-600 hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-950/40"
-                                >
-                                    <LogOut size={14} />
-                                    <span>Sign Out / Switch Account</span>
-                                </button>
+                                ) : onOpenAuthModal ? (
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setShowUserMenu(false);
+                                            onOpenAuthModal('login');
+                                        }}
+                                        className="flex w-full items-center space-x-2 rounded-lg px-2.5 py-1.5 text-xs text-indigo-600 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-950/40"
+                                    >
+                                        <User size={13} />
+                                        <span>Sign In / Switch</span>
+                                    </button>
+                                ) : null}
                             </div>
                         </div>
                     )}
